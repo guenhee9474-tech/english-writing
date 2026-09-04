@@ -1,0 +1,1241 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="영어 쓰기">
+<title>영어 쓰기 수행평가 - Stepping Out of My Comfort Zone</title>
+<!--
+  ══════════════════════════════════════════════════════════════════
+   교사용 안내
+  ══════════════════════════════════════════════════════════════════
+   이 파일 하나로 작동합니다. 설정은 아래 <script> 맨 위의 CONFIG 에서 바꿉니다.
+   (제한 시간, 필요 문장 수, Word Bank, 교사 PIN, 구글 설문지 연동 등)
+
+   1) 파일을 인터넷에 올립니다. (Netlify Drop, GitHub Pages, 학교 서버 등)
+      - 파일을 그냥 에어드롭으로 보내서 열면 자동 저장이 안 될 수 있습니다. 주소(URL)로 여세요.
+   2) 학생 아이패드에서 그 주소를 엽니다. (Apple 교실 "웹 사이트 열기" 또는 QR)
+   3) 잠금은 세 겹입니다. (CONFIG.lock)
+      ① 주소 잠금: requireHomeScreen: true 로 두면 "홈 화면에 추가"한 앱으로 열었을 때만 시작됩니다.
+         홈 화면 앱에는 주소창도 탭도 없습니다. 리허설 때 학생들이 홈 화면 추가까지 끝내 두세요.
+         (홈 화면 앱은 Safari와 저장 공간이 달라서, 당일에는 반드시 아이콘으로만 열게 하세요.)
+      ② 앱 전환 차단: iPad의 사용 지침(설정 > 손쉬운 사용 > 사용 지침, 상단 버튼 3번 클릭)이나
+         Apple 교실 "앱 고정"으로 그 앱에 고정합니다. 이것만은 웹페이지가 대신할 수 없습니다.
+      ③ 페이지 자체 감시: Safari에서 열었을 때는 전체 화면이어야 입력이 되고(requireFullscreen),
+         탭/앱 전환·전체 화면 해제·화면 분할·한글 선택을 감지해 시각과 함께 제출물에 남깁니다.
+         붙여넣기는 막혀 있고, 영어 칸에서 한글을 선택하면 선택이 풀립니다(번역 메뉴 차단용).
+   4) 제출물 받기 (둘 중 하나)
+      - 구글 설문지 연동: CONFIG.submit 에 설문지 주소와 entry 번호를 넣으면
+        제출 버튼을 누를 때 응답이 설문지(→ 시트)로 전송됩니다.
+        설문지 만들기: 단답형 "학번", "이름", 장문형 "브레인스토밍", "초안", "최종본", "자동집계"
+        설정 > 응답에서 "이메일 수집" 끄기, "응답 1회로 제한" 끄기
+        entry 번호 찾기: 설문지 우측 상단 ⋮ > "미리 채워진 링크 받기" > 아무 값이나 넣고 링크 복사
+        → 링크 속 entry.123456789=... 부분이 각 문항의 번호입니다.
+        formAction: 링크의 /viewform 을 /formResponse 로 바꾼 주소
+      - 연동을 안 하면: 제출 화면에서 "복사" / "파일로 저장" 버튼으로 받습니다.
+   5) 교사 PIN(기본 0000)은 꼭 바꾸세요. 화면 아래 "교사" 버튼 > PIN 입력 > 시간 추가 / 잠금 해제 / 데이터 삭제
+  ══════════════════════════════════════════════════════════════════
+-->
+<style>
+  :root{
+    --bg:#F2F4F7; --surface:#FFFFFF; --ink:#1B2436; --muted:#5D6675;
+    --line:#D8DEE7; --line-strong:#AEB8C6;
+    --accent:#0E7C66; --accent-ink:#0A5B4A; --accent-soft:#DDF2EC;
+    --mark:#FFE58A; --warn:#B45309; --warn-soft:#FDEBD0;
+    --danger:#B42318; --danger-soft:#FCE4E1;
+    --serif:"Iowan Old Style","Charter","Georgia","Times New Roman",serif;
+    --sans:-apple-system,"Apple SD Gothic Neo","Pretendard","Noto Sans KR","Malgun Gothic",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.55;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  input,textarea{-webkit-user-select:text;user-select:text;min-width:0;max-width:100%}
+  img,svg{max-width:100%}
+  h1,h2,h3,p,ul{margin:0}
+  ul{padding:0;list-style:none}
+  button{font:inherit;cursor:pointer}
+  input,textarea{font:inherit;color:inherit}
+  [hidden]{display:none !important}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  textarea:focus,input:focus{outline:none}
+
+  /* 버튼 */
+  .btn{border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);border-radius:8px;padding:9px 16px;font-size:15px;line-height:1.2}
+  .btn:active{transform:translateY(1px)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  .btn.ghost{background:transparent}
+  .btn.small{padding:7px 12px;font-size:14px}
+  .btn:disabled{opacity:.45;cursor:default}
+  .link{border:0;background:none;color:var(--muted);font-size:13px;text-decoration:underline;padding:6px}
+
+  /* 시작 화면 */
+  .gate{min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:24px 16px}
+  .gate-card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:36px 36px 32px;max-width:560px;width:100%}
+  .kicker{font-size:14px;color:var(--muted)}
+  .gate-title{font-family:var(--serif);font-weight:400;font-size:clamp(24px,6.5vw,34px);line-height:1.15;margin:6px 0 22px;overflow-wrap:anywhere}
+  .rules{display:grid;gap:8px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:16px 0;font-size:15px}
+  .rules li{display:grid;grid-template-columns:20px 1fr;gap:8px}
+  .rules li::before{content:"–";color:var(--muted)}
+  .gate-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:22px 0 8px}
+  .gate-form label{display:grid;gap:6px;font-size:14px;color:var(--muted)}
+  .gate-form input{width:100%;border:1px solid var(--line-strong);border-radius:8px;padding:10px 12px;font-size:17px;background:#fff}
+  @media (max-width:480px){.gate-card{padding:26px 20px 22px}.rules{font-size:14px}}
+  .gate-form input:focus{border-color:var(--accent)}
+  .gate-note{min-height:22px;font-size:14px;color:var(--accent-ink);margin-bottom:14px}
+  .gate-note.error{color:var(--danger)}
+  .gate .btn.primary{width:100%;padding:13px;font-size:17px}
+
+  /* 상단 바 */
+  .top{position:sticky;top:0;z-index:20;background:var(--surface);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;padding:10px 20px;flex-wrap:wrap}
+  .top-title{flex:1 1 240px;min-width:0}
+  .top-title h1{font-family:var(--serif);font-weight:400;font-size:20px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .top-title .kicker{font-size:12px}
+  .who{font-size:14px;color:var(--muted);white-space:nowrap}
+  .stats{display:flex;gap:6px;flex-wrap:wrap}
+  .stat{font-size:13px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 10px;white-space:nowrap}
+  .stat b{color:var(--ink);font-weight:600;margin-right:3px;font-variant-numeric:tabular-nums}
+  .stat.ok{border-color:var(--accent);color:var(--accent-ink);background:var(--accent-soft)}
+  .stat.ok b{color:var(--accent-ink)}
+  .stat.alert{border-color:var(--danger);color:var(--danger);background:var(--danger-soft)}
+  .stat.alert b{color:var(--danger)}
+  .timer{font-variant-numeric:tabular-nums;font-size:22px;font-weight:600;letter-spacing:.5px;min-width:74px;text-align:right}
+  .timer.warn{color:var(--warn)}
+  .timer.danger{color:var(--danger)}
+  .top-actions{display:flex;gap:8px}
+  @media (max-width:640px){
+    .top{padding:8px 12px;gap:8px}
+    .top-title{flex-basis:100%}
+    .top-title h1{font-size:17px;white-space:normal}
+    .who,.stat.env{display:none}
+    .stats{flex:1;gap:4px}
+    .stat{padding:3px 8px;font-size:12px}
+    .timer{font-size:19px;min-width:0}
+    .btn.small{padding:7px 10px}
+  }
+
+  .banner{background:var(--warn-soft);color:var(--warn);border-bottom:1px solid #EBD3A8;padding:10px 20px;font-size:15px;text-align:center}
+  .banner.danger{background:var(--danger-soft);color:var(--danger);border-color:#F0B9B3}
+
+  /* 본문 배치 */
+  .layout{display:grid;grid-template-columns:minmax(0,1fr);gap:20px;padding:20px;max-width:1240px;margin:0 auto}
+  @media (max-width:640px){.layout{padding:12px 10px;gap:14px}}
+  @media (min-width:980px){
+    .layout{grid-template-columns:minmax(0,1fr) 340px;align-items:start}
+    .panel{position:sticky;top:76px;max-height:calc(100vh - 92px);overflow:auto}
+  }
+
+  /* 학습지(한 장의 시트) */
+  .sheet{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:4px 28px}
+  .step{display:grid;grid-template-columns:82px minmax(0,1fr);gap:18px;padding:26px 0;border-top:1px solid var(--line)}
+  .step:first-child{border-top:0}
+  .step-no{font-family:var(--serif);font-size:15px;color:var(--muted);padding-top:3px}
+  .step h2{font-size:17px;font-weight:600;line-height:1.3}
+  .step .desc{color:var(--muted);font-size:14px;margin-top:4px}
+  .step-body{margin-top:14px}
+  @media (max-width:640px){
+    .sheet{padding:4px 18px}
+    .step{grid-template-columns:1fr;gap:6px}
+  }
+
+  /* Step 1 예시문 */
+  .example{font-family:var(--serif);font-size:17px;line-height:1.7;background:var(--bg);border-radius:10px;padding:16px 18px}
+  .example .n{color:var(--muted);font-size:13px;margin-right:2px}
+  .split{display:grid;grid-template-columns:1fr;gap:8px;margin-top:14px}
+  @media (min-width:640px){.split{grid-template-columns:1fr 1fr}}
+  .split label{display:grid;grid-template-columns:minmax(0,1fr) 92px;align-items:center;gap:10px;font-size:14px}
+  .split input{border:1px solid var(--line-strong);border-radius:8px;padding:7px 10px;text-align:center;font-family:var(--serif);font-size:16px}
+  .split input:focus{border-color:var(--accent)}
+
+  /* Step 2 브레인스토밍 */
+  .brain{display:grid;gap:12px}
+  .brain label{display:grid;grid-template-columns:190px 1fr;gap:12px;align-items:start;font-family:var(--serif);font-size:15px}
+  .brain label span{padding-top:9px}
+  .brain textarea{border:1px solid var(--line-strong);border-radius:8px;padding:9px 12px;min-height:44px;resize:none;background:#fff;font-family:var(--sans);font-size:15px;width:100%}
+  .brain textarea:focus{border-color:var(--accent)}
+  @media (max-width:640px){.brain label{grid-template-columns:1fr;gap:4px}.brain label span{padding-top:0}}
+  .frames{display:grid;gap:6px;font-family:var(--serif);font-size:14px;line-height:1.45;color:var(--ink)}
+  .frames li{padding-left:12px;text-indent:-12px}
+  .part-frames{margin-top:6px;font-family:var(--serif);font-size:13px;color:var(--muted);line-height:1.5}
+
+  /* Word Bank (본문 안) */
+  .wb-inline{margin-bottom:16px;padding:12px 14px;border:1px dashed var(--line-strong);border-radius:10px;font-size:14px;color:var(--muted)}
+  .wb-inline b{color:var(--ink);font-weight:600}
+  .wb-inline .list{font-family:var(--serif);color:var(--ink);font-size:15px;margin-top:4px}
+
+  /* Step 3 초안: 밑줄이 있는 문장 칸 */
+  .part{margin-top:18px}
+  .part:first-child{margin-top:0}
+  .part-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .part-head h3{font-size:15px;font-weight:600}
+  .part-head .need{font-size:13px;color:var(--muted)}
+  .part-head .count{margin-left:auto;font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .part-head .count.ok{color:var(--accent-ink)}
+  .part-head .count.warn{color:var(--warn)}
+  .field-warn.soft{color:var(--warn)}
+  .lines{display:grid;gap:4px;margin-top:6px}
+  .line{display:grid;grid-template-columns:34px minmax(0,1fr);gap:6px;align-items:end}
+  .line .num{font-family:var(--serif);color:var(--muted);font-size:15px;padding-bottom:10px}
+  .line textarea{width:100%;border:0;border-bottom:1.5px solid var(--line-strong);border-radius:0;background:transparent;padding:8px 4px 7px;resize:none;overflow:hidden;font-family:var(--serif);font-size:18px;line-height:1.5;min-height:42px}
+  .line textarea:focus{border-bottom-color:var(--accent);box-shadow:0 1.5px 0 var(--accent)}
+  .add-line{margin-top:8px}
+
+  /* Step 4 최종본 */
+  .final-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+  .final-tools .hint{font-size:13px;color:var(--muted)}
+  .final{width:100%;border:1px solid var(--line-strong);border-radius:10px;padding:16px 18px;min-height:240px;resize:none;overflow:hidden;font-family:var(--serif);font-size:18px;line-height:1.65;background:#fff}
+  .final:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+  .field-warn{margin-top:6px;font-size:13px;color:var(--danger);min-height:18px}
+  .locked textarea,.locked input{background:var(--bg) !important;color:var(--muted)}
+
+  .sheet-foot{display:flex;justify-content:flex-end;align-items:center;gap:10px;padding:18px 0 22px;border-top:1px solid var(--line)}
+  .sheet-foot .btn.primary{padding:12px 26px;font-size:16px}
+
+  /* 옆 패널 */
+  .panel{display:grid;gap:14px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .card h3{font-size:14px;font-weight:600;color:var(--muted);margin-bottom:10px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{border:1px solid var(--line-strong);border-radius:999px;padding:4px 11px;font-family:var(--serif);font-size:14px;line-height:1.3;color:var(--ink);transition:background .15s,color .15s,border-color .15s}
+  .chip.used{background:var(--accent);border-color:var(--accent);color:#fff}
+  .chip.used::before{content:"✓ ";font-family:var(--sans);font-size:12px}
+  .meter-row{display:flex;align-items:center;gap:12px;margin-top:12px}
+  .meter{display:flex;gap:3px;flex:1}
+  .meter i{flex:1;height:10px;border-radius:3px;background:var(--line);transition:background .15s}
+  .meter i.on{background:var(--accent)}
+  .meter-label{font-size:13px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+  .meter-label b{color:var(--ink)}
+  .meter-label.ok b{color:var(--accent-ink)}
+  .preview{font-family:var(--serif);font-size:16px;line-height:1.65;min-height:60px;word-break:break-word}
+  .preview .sn{color:var(--muted);font-size:12px;margin-right:2px;vertical-align:1px}
+  .preview .empty{color:var(--muted);font-family:var(--sans);font-size:14px}
+  .preview .src{display:block;font-family:var(--sans);font-size:12px;color:var(--muted);margin-bottom:6px}
+  mark{background:var(--mark);color:inherit;border-radius:3px;padding:0 2px}
+  .log{font-size:13px;color:var(--muted);display:grid;gap:4px}
+  .log b{color:var(--ink);font-variant-numeric:tabular-nums}
+  .log .bad b{color:var(--danger)}
+  @media (prefers-reduced-motion:reduce){.chip,.meter i{transition:none}}
+
+  .foot{text-align:center;padding:6px 0 26px}
+
+  /* 잠금 관련 */
+  .stat.env{border-style:dashed}
+  .home-guide{border:1px solid var(--warn);background:var(--warn-soft);border-radius:10px;padding:14px 16px;margin:20px 0 6px;font-size:15px}
+  .home-guide b{display:block;margin-bottom:6px}
+  .home-guide ol{margin:0;padding-left:20px;display:grid;gap:4px}
+  .fs-overlay{position:fixed;inset:0;z-index:45;background:rgba(242,244,247,.96);display:flex;align-items:center;justify-content:center;padding:24px;text-align:center}
+  .fs-overlay .box{max-width:420px}
+  .fs-overlay h2{font-size:20px;font-weight:600;margin-bottom:8px}
+  .fs-overlay p{color:var(--muted);font-size:15px;margin-bottom:18px}
+  .fs-overlay .btn.primary{padding:13px 28px;font-size:17px}
+  .modal.dlg{z-index:60}
+  .dlg-input{width:100%;border:1px solid var(--line-strong);border-radius:8px;padding:10px 12px;font-size:18px;margin-bottom:16px;letter-spacing:2px}
+  .dlg-input:focus{border-color:var(--accent)}
+  .dlg .modal-actions{flex-wrap:wrap}
+
+  /* 안내 토스트, 모달 */
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:999px;font-size:14px;z-index:50;max-width:90vw;text-align:center}
+  .modal{position:fixed;inset:0;background:rgba(27,36,54,.45);display:flex;align-items:center;justify-content:center;padding:20px;z-index:40}
+  .modal-card{background:var(--surface);border-radius:14px;padding:26px 26px 22px;max-width:460px;width:100%}
+  .modal-card h2{font-size:19px;font-weight:600;margin-bottom:12px}
+  .summary{display:grid;gap:6px;font-size:15px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:12px 0;margin-bottom:12px}
+  .summary div{display:flex;justify-content:space-between;gap:12px}
+  .summary .bad{color:var(--danger)}
+  .summary .good{color:var(--accent-ink)}
+  .modal-note{font-size:14px;color:var(--muted);margin-bottom:16px}
+  .modal-actions{display:flex;justify-content:flex-end;gap:8px}
+
+  /* 제출 완료 화면 */
+  .done{max-width:820px;margin:0 auto;padding:28px 20px 40px}
+  .done .sheet{padding:28px 32px}
+  @media (max-width:640px){.done{padding:16px 10px 30px}.done .sheet{padding:20px 16px}.done-title{font-size:24px}}
+  .done-title{font-family:var(--serif);font-weight:400;font-size:28px;line-height:1.2;margin:4px 0 14px}
+  .done-status{font-size:15px;padding:10px 14px;border-radius:8px;background:var(--accent-soft);color:var(--accent-ink);margin-bottom:16px}
+  .done-status.bad{background:var(--danger-soft);color:var(--danger)}
+  .done-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:18px}
+  .done-grid div{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px;color:var(--muted)}
+  .done-grid b{display:block;color:var(--ink);font-size:18px;font-variant-numeric:tabular-nums}
+  .done-grid .bad b{color:var(--danger)}
+  .done-text{font-family:var(--serif);font-size:18px;line-height:1.7;border:1px solid var(--line);border-radius:10px;padding:18px 20px;background:#fff;white-space:pre-wrap;word-break:break-word}
+  .done-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+  .done-hint{font-size:14px;color:var(--muted);margin-top:14px}
+</style>
+</head>
+<body>
+
+<!-- 시작 화면 -->
+<section id="gate" class="gate">
+  <div class="gate-card">
+    <p class="kicker" id="gateKicker"></p>
+    <h1 class="gate-title" id="gateTitle"></h1>
+    <ul class="rules" id="rules"></ul>
+    <div id="homeGuide" class="home-guide" hidden>
+      <b>홈 화면 앱으로 열어야 시작할 수 있습니다.</b>
+      <ol>
+        <li>Safari 아래(또는 위)의 공유 버튼(네모에서 화살표가 나가는 모양)을 누르세요.</li>
+        <li>"홈 화면에 추가"를 누른 뒤 "추가"를 누르세요.</li>
+        <li>Safari를 닫고, 홈 화면에 생긴 "영어 쓰기" 아이콘으로 다시 여세요.</li>
+      </ol>
+    </div>
+    <div class="gate-form" id="gateForm">
+      <label>학번 <input id="sid" inputmode="numeric" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="예: 10315"></label>
+      <label>이름 <input id="name" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="이름"></label>
+    </div>
+    <p id="gateNote" class="gate-note"></p>
+    <button id="startBtn" class="btn primary">시작하기</button>
+  </div>
+</section>
+
+<!-- 작성 화면 -->
+<div id="app" hidden>
+  <header class="top">
+    <div class="top-title">
+      <p class="kicker" id="topKicker"></p>
+      <h1 id="topTitle"></h1>
+    </div>
+    <div class="who" id="who"></div>
+    <div class="stats" aria-live="polite">
+      <span class="stat" id="stSent"><b>0</b>문장</span>
+      <span class="stat" id="stExpr"><b>0</b>표현</span>
+      <span class="stat" id="stLeave" hidden><b>0</b>이탈</span>
+      <span class="stat env" id="stEnv" hidden></span>
+    </div>
+    <div class="timer" id="timer" aria-live="off">--:--</div>
+    <div class="top-actions">
+      <button id="fsBtn" class="btn ghost small" hidden>전체 화면</button>
+      <button id="submitTop" class="btn primary small">제출</button>
+    </div>
+  </header>
+  <div id="banner" class="banner" hidden></div>
+
+  <main class="layout">
+    <div class="sheet" id="sheet">
+      <section class="step" id="step1">
+        <div class="step-no">Step 1</div>
+        <div>
+          <h2>예시 분석하기</h2>
+          <p class="desc" id="d1"></p>
+          <div class="step-body">
+            <div class="example" id="example"></div>
+            <div class="split" id="split"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="step" id="step2">
+        <div class="step-no">Step 2</div>
+        <div>
+          <h2>조사 및 브레인스토밍</h2>
+          <p class="desc" id="d2"></p>
+          <div class="step-body">
+            <div class="wb-inline" id="ideaBox"><b>Idea Bank</b><div class="list" id="ideaList"></div></div>
+            <div class="brain" id="brain"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="step" id="step3">
+        <div class="step-no">Step 3</div>
+        <div>
+          <h2>초안 쓰기</h2>
+          <p class="desc" id="step3Desc"></p>
+          <div class="step-body">
+            <div class="wb-inline"><b>Word Bank</b><div class="list" id="wbList"></div></div>
+            <div id="parts"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="step" id="step4">
+        <div class="step-no">Step 4</div>
+        <div>
+          <h2>최종 글쓰기</h2>
+          <p class="desc" id="d4"></p>
+          <div class="step-body">
+            <div class="final-tools">
+              <button id="importBtn" class="btn small">초안 가져오기</button>
+              <span class="hint">초안의 문장을 이 칸으로 옮긴 뒤 자유롭게 고쳐 쓰세요.</span>
+            </div>
+            <textarea id="final" class="final" lang="en" autocorrect="off" autocapitalize="off" spellcheck="false" autocomplete="off" placeholder="Write your final paragraph here."></textarea>
+            <div class="field-warn" id="finalWarn"></div>
+          </div>
+        </div>
+      </section>
+
+      <div class="sheet-foot">
+        <span class="hint" id="autosaveNote" style="font-size:13px;color:var(--muted)">자동 저장됨</span>
+        <button id="submitBtn" class="btn primary">제출하기</button>
+      </div>
+    </div>
+
+    <aside class="panel">
+      <div class="card">
+        <h3>Word Bank 사용 현황</h3>
+        <div class="chips" id="chips"></div>
+        <div class="meter-row">
+          <div class="meter" id="meter"></div>
+          <div class="meter-label" id="meterLabel"><b>0</b> / 9 문장</div>
+        </div>
+      </div>
+      <div class="card" id="framesCard" hidden>
+        <h3>문장 틀</h3>
+        <ul class="frames" id="frames"></ul>
+      </div>
+      <div class="card">
+        <h3>미리보기</h3>
+        <div class="preview" id="preview"></div>
+      </div>
+      <div class="card">
+        <h3>기록</h3>
+        <div class="log" id="log"></div>
+      </div>
+    </aside>
+  </main>
+  <div class="foot"><button id="teacherBtn" class="link">교사</button></div>
+</div>
+
+<!-- 제출 확인 -->
+<div id="modal" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <h2 id="modalTitle">제출할까요?</h2>
+    <div class="summary" id="modalSummary"></div>
+    <p class="modal-note">제출하면 더 이상 고칠 수 없습니다.</p>
+    <div class="modal-actions">
+      <button id="modalCancel" class="btn">더 쓰기</button>
+      <button id="modalOk" class="btn primary">제출하기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 제출 완료 -->
+<section id="done" class="done" hidden>
+  <div class="sheet">
+    <p class="kicker" id="doneKicker"></p>
+    <h1 class="done-title">제출되었습니다</h1>
+    <div class="done-status" id="doneStatus"></div>
+    <div class="done-grid" id="doneGrid"></div>
+    <div class="done-text" id="doneText"></div>
+    <div class="done-actions">
+      <button id="copyBtn" class="btn">최종본 복사</button>
+      <button id="saveBtn" class="btn">파일로 저장</button>
+    </div>
+    <p class="done-hint">이 화면을 선생님께 보여 주세요. 화면을 닫아도 같은 학번으로 다시 열면 이 화면이 나타납니다.</p>
+    <div class="foot"><button id="teacherBtn2" class="link">교사</button></div>
+  </div>
+</section>
+
+<div id="fsOverlay" class="fs-overlay" hidden>
+  <div class="box">
+    <h2>전체 화면이 해제되었습니다</h2>
+    <p>해제된 시각이 기록되었습니다. 계속 쓰려면 전체 화면으로 돌아가세요.</p>
+    <button id="fsResume" class="btn primary">전체 화면으로 계속 쓰기</button>
+    <div id="fsSkipWrap" hidden style="margin-top:14px">
+      <p style="margin-bottom:8px">이 기기에서는 전체 화면이 열리지 않는 것 같습니다.</p>
+      <button id="fsSkip" class="btn">전체 화면 없이 계속 쓰기 (기록에 남습니다)</button>
+    </div>
+    <div class="foot"><button id="teacherBtn3" class="link">교사</button></div>
+  </div>
+</div>
+
+<!-- 공용 대화상자 (교사 메뉴, 확인) -->
+<div id="dlg" class="modal dlg" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true">
+    <h2 id="dlgTitle"></h2>
+    <p class="modal-note" id="dlgText"></p>
+    <input id="dlgInput" class="dlg-input" hidden autocomplete="off" autocorrect="off" spellcheck="false">
+    <div class="modal-actions" id="dlgActions"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════
+   교사용 설정 (여기만 고치면 됩니다)
+   ════════════════════════════════════════════════════════════════ */
+const CONFIG = {
+  title: "Good for All of Us: A Place for Everyone",
+  subtitle: "1학년 2학기 영어 쓰기 수행평가",
+
+  minutes: 40,                 // 제한 시간(분). 주소 뒤에 ?min=30 을 붙이면 그 시간으로 열립니다.
+  autoSubmitWhenTimeUp: true,  // 시간이 끝나면 자동 제출
+  requiredSentences: 9,        // 최종본 필요 문장 수
+  requiredExpressions: 5,      // Word Bank 필요 표현 수
+  teacherPin: "0000",          // ★ 꼭 바꾸세요. 비워 두면("") 교사 메뉴가 꺼집니다.
+
+  lock: {
+    requireHomeScreen: false,   // true: "홈 화면에 추가"한 앱(주소창·탭 없음)으로 열었을 때만 시작. 주소 뒤 ?home=1 로도 켤 수 있음
+    requireFullscreen: true,    // Safari에서 열었을 때 전체 화면이어야 입력 가능. 해제하면 기록되고 입력이 잠김
+    blockHangulSelection: true  // 영어 칸에서 한글을 선택하면 선택을 풀고 기록 (iPad 번역 메뉴 차단용)
+  },
+
+  // 각 단계 안내문
+  desc1: "다음 예시 문단을 읽고, 글을 네 개의 부분으로 나누세요. (해당하는 문장 번호를 적으세요.)",
+  desc2: "우리 학교나 동네에서 누군가는 이용하기 어려운 공간을 하나 고르고, 그곳을 모두에게 편한 곳으로 바꿀 방법을 기록하세요.",
+  desc3: "Step 2에 적은 내용과 아래 Word Bank를 활용하여 제안서를 {n}문장 이상으로 작성하세요. Word Bank 표현을 쓰면 오른쪽에 자동으로 표시됩니다.",
+  desc4: "Step 3의 초안을 바탕으로 본인의 글을 수정하여 최종본을 완성하세요. (이후 말하기 수행평가의 대본으로 활용됩니다.)",
+
+  // Step 1 예시 문단 (문장 단위) — 제목은 exampleTitle
+  exampleTitle: "A Library for Everyone",
+  example: [
+    "I would like to make some suggestions for our school library.",
+    "Many students rely on the library to study and rest.",
+    "However, the entrance has three steps.",
+    "This is the reason why some students cannot come in easily.",
+    "First, we should build a ramp at the entrance.",
+    "This will make it easier for everyone to enter.",
+    "Second, popular books should be on the lower shelves.",
+    "This will ensure that all students can make use of them.",
+    "These changes will make our library more accessible.",
+    "They will benefit everyone, regardless of age or ability.",
+    "I am confident that our library can become a place where every student feels welcome."
+  ],
+  step1Parts: ["Opening: 장소와 문제", "Suggestion 1 & Effect", "Suggestion 2 & Effect", "Closing: 모두에게 좋은 이유"],
+
+  // Step 2 브레인스토밍 (hint = 입력칸 안내문)
+  step2Items: [
+    { label: "1. Place",              hint: "고른 공간. 예) 급식실, 도서관, 정문, 운동장, 화장실, 학교 홈페이지" },
+    { label: "2. Problem",            hint: "누가, 왜 이용하기 어려운가" },
+    { label: "3. Suggestion 1 → Effect", hint: "제안 1 → 기대 효과" },
+    { label: "4. Suggestion 2 → Effect", hint: "제안 2 → 기대 효과" },
+    { label: "5. Good for All",       hint: "이 변화가 결국 모두에게 좋은 이유" }
+  ],
+  // Step 2 참고 목록 (비우면 Idea Bank 상자가 사라집니다)
+  ideaBank: [
+    "경사로(ramp)", "크고 여러 언어로 된 표지판", "높이가 다른 책상·세면대", "글자와 배경의 색 대비",
+    "소리와 불빛을 함께 쓰는 알림", "넓고 평평한 길", "그늘과 의자", "조용한 공간",
+    "홈페이지의 대체 텍스트·자막·글자 크기 조절"
+  ],
+
+  // Step 3 초안 구성 (min = 최소 문장 수, frames = 문장 틀)
+  step3Parts: [
+    { title: "Part 1. Opening", hint: "Step 2의 1, 2번 항목 포함", min: 3,
+      frames: ["I would like to make some suggestions for ___.", "Many students rely on ___.", "However, ___.", "This is the reason why ___."] },
+    { title: "Part 2. Suggestions & Expected Effects", hint: "Step 2의 3, 4번 항목 포함", min: 4,
+      frames: ["First, we should ___.", "This will make it easier for ___ to ___.", "Second, ___ should be ___.", "This will ensure that ___."] },
+    { title: "Part 3. Closing", hint: "Step 2의 5번 항목 포함", min: 2,
+      frames: ["These changes will make ___ more accessible.", "They will benefit everyone, regardless of ___.", "I am confident that ___."] }
+  ],
+
+  // Word Bank. label = 학생에게 보이는 표현, re = 자동 감지 규칙(변형 허용)
+  // 규칙을 만들기 어려우면 re 를 지우고 words: "make a difference" 처럼 적으면 그 문구 그대로만 찾습니다.
+  wordBank: [
+    { label: "inclusive",        re: /\binclusive(?:ly|ness)?\b/i },
+    { label: "accessible (to)",  re: /\baccessib(?:le|ility)\b/i },
+    { label: "regardless of",    re: /\bregardless\s+of\b/i },
+    { label: "benefit (from)",   re: /\bbenefit(?:s|ed|ing|ted|ting)?\b/i },
+    { label: "ensure / make sure that",
+      re: /\b(?:ensur(?:e|es|ed|ing)|mak(?:e|es|ing)\s+sure|made\s+sure)\b/i },
+    { label: "rely on",          re: /\brel(?:y|ies|ied|ying)\s+on\b/i },
+    { label: "make use of",      re: /\b(?:make|makes|made|making)\s+use\s+of\b/i },
+    { label: "make it easier for A to B",
+      re: /\b(?:make|makes|made|making)\s+it\s+(?:much\s+|even\s+)?(?:easier|easy|difficult|harder|hard|possible|safer|safe|comfortable)\b/i },
+    { label: "the reason why / a place where",
+      re: /\b(?:reasons?\s+why|(?:place|places|room|rooms|space|spaces|area|areas|park|parks|school|library)\s+where)\b/i }
+  ],
+
+  // 구글 설문지 연동 (비워 두면 복사/저장 버튼만 사용)
+  submit: {
+    formAction: "",              // 예: "https://docs.google.com/forms/d/e/1FAIpQLSe.../formResponse"
+    entries: {                   // 예: "entry.1234567890"
+      sid: "", name: "", brainstorm: "", draft: "", final: "", meta: ""
+    }
+  }
+};
+/* ════════════════════════════════════════════════════════════════ */
+
+const HANGUL = /[\u1100-\u11FF\u3130-\u318F\uAC00-\uD7AF]/;
+// Step 2 항목은 문자열 또는 { label, hint } 둘 다 허용
+function step2Label(item) { return typeof item === "string" ? item : (item.label || ""); }
+const $ = (id) => document.getElementById(id);
+
+// ---------- 분석 ----------
+function normalizeBank(bank) {
+  return bank.map((w) => {
+    if (w.re instanceof RegExp) return { label: w.label, re: w.re };
+    const src = String(w.words || w.label).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+    return { label: w.label, re: new RegExp("\\b" + src + "\\b", "i") };
+  });
+}
+const BANK = normalizeBank(CONFIG.wordBank);
+
+function splitSentences(text) {
+  const t = String(text || "").replace(/\s+/g, " ").trim();
+  if (!t) return [];
+  const out = [];
+  const re = /[^.!?]+(?:[.!?]+["')\]]*|$)/g;
+  let m;
+  while ((m = re.exec(t)) !== null) {
+    if (m.index === re.lastIndex) { re.lastIndex++; continue; }
+    const s = m[0].trim();
+    if (/[A-Za-z]{2,}/.test(s)) out.push(s);
+  }
+  return out;
+}
+
+function usedExpressions(text) {
+  const used = [];
+  BANK.forEach((w, i) => { if (w.re.test(text)) used.push(i); });
+  return used;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// Word Bank 표현을 <mark>로 감싼 HTML (겹치는 구간은 앞의 것만)
+function highlight(text) {
+  const ranges = [];
+  BANK.forEach((w, i) => {
+    const g = new RegExp(w.re.source, w.re.flags.includes("g") ? w.re.flags : w.re.flags + "g");
+    let m;
+    while ((m = g.exec(text)) !== null) {
+      if (m[0].length === 0) { g.lastIndex++; continue; }
+      ranges.push({ s: m.index, e: m.index + m[0].length, i });
+    }
+  });
+  ranges.sort((a, b) => a.s - b.s || b.e - a.e);
+  let html = "", pos = 0;
+  ranges.forEach((r) => {
+    if (r.s < pos) return;
+    html += escapeHtml(text.slice(pos, r.s)) + "<mark>" + escapeHtml(text.slice(r.s, r.e)) + "</mark>";
+    pos = r.e;
+  });
+  return html + escapeHtml(text.slice(pos));
+}
+
+function analyze(text) {
+  return { sentences: splitSentences(text), used: usedExpressions(text), hangul: HANGUL.test(text) };
+}
+
+// ---------- 상태 ----------
+const state = {
+  sid: "", name: "", startedAt: 0, extraSec: 0,
+  step1: [], step2: [], draft: [], final: "",
+  leaves: [], hangul: 0, bursts: 0, hangulSel: 0, env: "", fsNote: "",
+  submitted: false, submittedAt: 0, submitReason: "", sent: null
+};
+let minutes = CONFIG.minutes;
+let locked = false;
+let fsLost = false;
+let suppressLeaveUntil = 0;
+const ENV = {
+  standalone: navigator.standalone === true || !!(window.matchMedia && window.matchMedia("(display-mode: standalone)").matches)
+};
+const EVENT_LABEL = { hidden: "탭/앱 전환", blur: "포커스 이탈", fullscreen: "전체화면 해제", split: "화면 분할" };
+let saveTimer = null;
+let tickTimer = null;
+let toastTimer = null;
+const hangulFlag = {};   // 필드별 "한글이 들어있는 상태"
+
+function storageKey() { return "cz1:" + state.sid; }
+function save() {
+  try {
+    const copy = Object.assign({}, state);
+    localStorage.setItem(storageKey(), JSON.stringify(copy));
+    const n = $("autosaveNote"); if (n) n.textContent = "자동 저장됨 " + fmtClock(new Date());
+  } catch (e) {
+    const n = $("autosaveNote"); if (n) n.textContent = "자동 저장이 되지 않습니다. 화면을 닫지 마세요.";
+  }
+}
+function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(save, 400); }
+function load(sid) {
+  try { const raw = localStorage.getItem("cz1:" + sid); return raw ? JSON.parse(raw) : null; } catch (e) { return null; }
+}
+
+function fmtClock(d) { return d.toTimeString().slice(0, 8); }
+function pad(n) { return (n < 10 ? "0" : "") + n; }
+
+function toast(msg, ms) {
+  const t = $("toast"); t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, ms || 2200);
+}
+
+function grow(el) { el.style.height = "auto"; el.style.height = (el.scrollHeight + 2) + "px"; }
+
+// ---------- 화면 만들기 ----------
+function renderStatic() {
+  document.title = CONFIG.subtitle + " - " + CONFIG.title;
+  $("gateKicker").textContent = CONFIG.subtitle;
+  $("gateTitle").textContent = CONFIG.title;
+  $("topKicker").textContent = CONFIG.subtitle;
+  $("topTitle").textContent = CONFIG.title;
+  $("doneKicker").textContent = CONFIG.subtitle + " · " + CONFIG.title;
+
+  $("rules").innerHTML = [
+    "붙여넣기는 사용할 수 없습니다. 모든 문장은 직접 입력합니다.",
+    "다른 앱이나 탭으로 이동하면 횟수와 시각이 제출물에 기록됩니다.",
+    "글은 이 기기에 자동 저장됩니다. 실수로 닫혀도 같은 학번으로 다시 시작하면 이어집니다.",
+    "제한 시간은 " + minutes + "분입니다." + (CONFIG.autoSubmitWhenTimeUp ? " 시간이 끝나면 자동으로 제출됩니다." : "")
+  ].map((r) => "<li>" + r + "</li>").join("");
+
+  $("d1").textContent = CONFIG.desc1 || "";
+  $("d2").textContent = CONFIG.desc2 || "";
+  $("d4").textContent = CONFIG.desc4 || "";
+
+  // Step 1
+  $("example").innerHTML =
+    (CONFIG.exampleTitle ? '<div style="font-weight:600;margin-bottom:8px">' + escapeHtml(CONFIG.exampleTitle) + "</div>" : "") +
+    CONFIG.example.map((s, i) => '<span class="n">(' + (i + 1) + ")</span>" + escapeHtml(s) + " ").join("");
+  $("split").innerHTML = CONFIG.step1Parts.map((p, i) =>
+    '<label>(' + escapeHtml(p) + ')<input data-step1="' + i + '" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="예: 1-4"></label>').join("");
+
+  // Step 2
+  const ideas = CONFIG.ideaBank || [];
+  $("ideaBox").hidden = ideas.length === 0;
+  $("ideaList").textContent = ideas.join("  /  ");
+  $("brain").innerHTML = CONFIG.step2Items.map((p, i) =>
+    '<label><span>' + escapeHtml(step2Label(p)) + '</span><textarea data-step2="' + i + '" rows="1" autocomplete="off" spellcheck="false" placeholder="' + escapeHtml(p.hint || "") + '"></textarea></label>').join("");
+
+  // Step 3
+  const total = CONFIG.step3Parts.reduce((a, p) => a + p.min, 0);
+  $("step3Desc").textContent = CONFIG.desc3.replace("{n}", Math.max(total, CONFIG.requiredSentences));
+  $("wbList").textContent = BANK.map((w) => w.label).join("  /  ");
+  $("chips").innerHTML = BANK.map((w, i) => '<span class="chip" data-chip="' + i + '">' + escapeHtml(w.label) + "</span>").join("");
+  const allFrames = CONFIG.step3Parts.reduce((a, p) => a.concat(p.frames || []), []);
+  $("framesCard").hidden = allFrames.length === 0;
+  $("frames").innerHTML = allFrames.map((f) => "<li>" + escapeHtml(f) + "</li>").join("");
+  $("meter").innerHTML = Array.from({ length: CONFIG.requiredSentences }, () => "<i></i>").join("");
+}
+
+function renderParts() {
+  let n = 0;
+  $("parts").innerHTML = CONFIG.step3Parts.map((p, pi) => {
+    const lines = state.draft[pi].map((v, li) => {
+      n++;
+      return '<div class="line"><span class="num">(' + n + ')</span><textarea data-part="' + pi + '" data-line="' + li + '" rows="1" lang="en" autocorrect="off" autocapitalize="off" spellcheck="false" autocomplete="off"></textarea></div>';
+    }).join("");
+    return '<div class="part" data-partbox="' + pi + '"><div class="part-head"><h3>' + escapeHtml(p.title) + '</h3><span class="need">' + escapeHtml(p.hint) + " · " + p.min + '문장 이상</span><span class="count" data-count="' + pi + '"></span></div><div class="lines">' + lines + '</div><button class="btn small add-line" data-add="' + pi + '" type="button">+ 문장 추가</button></div>';
+  }).join("");
+  document.querySelectorAll("[data-part]").forEach((ta) => {
+    ta.value = state.draft[+ta.dataset.part][+ta.dataset.line] || "";
+    ta.readOnly = locked || fsLost; grow(ta);
+  });
+}
+
+function fillFields() {
+  const ro = locked || fsLost;
+  document.querySelectorAll("[data-step1]").forEach((el) => { el.value = state.step1[+el.dataset.step1] || ""; el.readOnly = ro; });
+  document.querySelectorAll("[data-step2]").forEach((el) => { el.value = state.step2[+el.dataset.step2] || ""; el.readOnly = ro; grow(el); });
+  renderParts();
+  const f = $("final"); f.value = state.final || ""; f.readOnly = ro; grow(f);
+  $("who").textContent = state.sid + " " + state.name;
+  $("sheet").classList.toggle("locked", locked);
+  document.querySelectorAll("[data-add], #importBtn").forEach((b) => { b.disabled = locked; });
+}
+
+function draftText() {
+  return state.draft.map((part) => part.map((s) => s.trim()).filter(Boolean).join(" ")).filter(Boolean).join("\n\n");
+}
+function draftSentenceCount() {
+  return state.draft.reduce((a, part) => a + part.filter((s) => /[A-Za-z]{2,}/.test(s)).length, 0);
+}
+
+function refresh() {
+  const finalText = state.final.trim();
+  const source = finalText ? "final" : "draft";
+  const text = finalText || draftText();
+  const a = analyze(text);
+  const nS = a.sentences.length, nE = a.used.length;
+
+  // 상단 통계
+  const stS = $("stSent"), stE = $("stExpr");
+  stS.firstChild.textContent = nS; stE.firstChild.textContent = nE;
+  stS.className = "stat" + (nS >= CONFIG.requiredSentences ? " ok" : "");
+  stE.className = "stat" + (nE >= CONFIG.requiredExpressions ? " ok" : "");
+  const stL = $("stLeave");
+  stL.hidden = state.leaves.length === 0; stL.firstChild.textContent = state.leaves.length;
+  stL.className = "stat alert";
+
+  // 칩, 미터
+  document.querySelectorAll("[data-chip]").forEach((c) => c.classList.toggle("used", a.used.includes(+c.dataset.chip)));
+  document.querySelectorAll("#meter i").forEach((seg, i) => seg.classList.toggle("on", i < nS));
+  const ml = $("meterLabel");
+  ml.innerHTML = "<b>" + nS + "</b> / " + CONFIG.requiredSentences + " 문장";
+  ml.className = "meter-label" + (nS >= CONFIG.requiredSentences ? " ok" : "");
+
+  // 초안 부분별 문장 수
+  CONFIG.step3Parts.forEach((p, pi) => {
+    const c = document.querySelector('[data-count="' + pi + '"]');
+    if (!c) return;
+    const k = state.draft[pi].filter((s) => /[A-Za-z]{2,}/.test(s)).length;
+    const noPeriod = state.draft[pi].some((s) => /[A-Za-z]{2,}/.test(s) && !/[.!?]["')\]]*\s*$/.test(s));
+    c.textContent = k + " / " + p.min + (noPeriod ? "  ·  마침표 확인" : "");
+    c.className = "count" + (noPeriod ? " warn" : k >= p.min ? " ok" : "");
+  });
+
+  // 미리보기
+  const pv = $("preview");
+  if (!text.trim()) {
+    pv.innerHTML = '<span class="empty">초안이나 최종본을 쓰면 여기에 문장 번호와 Word Bank 표현이 표시됩니다.</span>';
+  } else {
+    pv.innerHTML = '<span class="src">' + (source === "final" ? "최종본" : "초안 (최종본을 쓰면 최종본이 표시됩니다)") + "</span>" +
+      a.sentences.map((s, i) => '<span class="sn">(' + (i + 1) + ")</span>" + highlight(s)).join(" ");
+  }
+
+  // 최종본 경고
+  const fw = $("finalWarn");
+  if (HANGUL.test(state.final)) { fw.textContent = "한글이 들어 있습니다. 영어로 작성하세요."; fw.className = "field-warn"; }
+  else if (finalText && !/[.!?]["')\]]*$/.test(finalText)) { fw.textContent = "마지막 문장에 마침표를 찍으세요."; fw.className = "field-warn soft"; }
+  else { fw.textContent = ""; fw.className = "field-warn"; }
+
+  // 기록
+  $("log").innerHTML =
+    '<div class="' + (state.leaves.length ? "bad" : "") + '">화면 이탈 <b>' + state.leaves.length + "</b>회</div>" +
+    '<div class="' + (state.hangul ? "bad" : "") + '">영어 칸 한글 입력 <b>' + state.hangul + "</b>회</div>" +
+    '<div class="' + (state.bursts ? "bad" : "") + '">대량 입력 <b>' + state.bursts + "</b>회</div>" +
+    '<div class="' + (state.hangulSel ? "bad" : "") + '">한글 선택 <b>' + state.hangulSel + "</b>회</div>" +
+    "<div>초안 문장 <b>" + draftSentenceCount() + "</b>개</div>" +
+    "<div>실행 환경 <b>" + (ENV.standalone ? "홈 화면 앱" : "브라우저") + "</b></div>";
+}
+
+// ---------- 입력 처리 ----------
+function isWritingField(el) {
+  return el && (el.matches("[data-part], #final") );
+}
+
+function onInput(e) {
+  const el = e.target;
+  if (locked) return;
+  if (el.matches("[data-step1]")) state.step1[+el.dataset.step1] = el.value;
+  else if (el.matches("[data-step2]")) { state.step2[+el.dataset.step2] = el.value; grow(el); }
+  else if (el.matches("[data-part]")) { state.draft[+el.dataset.part][+el.dataset.line] = el.value; grow(el); }
+  else if (el.id === "final") { state.final = el.value; grow(el); }
+  else return;
+
+  if (isWritingField(el)) {
+    // 한글 입력 감지 (없다가 생기는 순간을 1회로 셈)
+    const key = el.id || (el.dataset.part + ":" + el.dataset.line);
+    const has = HANGUL.test(el.value);
+    if (has && !hangulFlag[key]) { state.hangul++; toast("영어로 작성하세요. 한글 입력이 기록됩니다.", 2600); }
+    hangulFlag[key] = has;
+    // 한 번에 많은 글자가 들어오는 경우
+    const prev = +(el.dataset.len || 0);
+    if (el.value.length - prev > 25 && e.inputType !== "insertReplacementText") state.bursts++;
+    el.dataset.len = el.value.length;
+  }
+  refresh();
+  scheduleSave();
+}
+
+function blockPaste(e) {
+  if (!$("app").hidden) { e.preventDefault(); toast("붙여넣기는 사용할 수 없습니다. 직접 입력하세요."); }
+}
+
+function addLine(pi) {
+  if (locked) return;
+  if (state.draft[pi].length >= 8) { toast("한 부분에는 8문장까지 쓸 수 있습니다."); return; }
+  state.draft[pi].push("");
+  renderParts(); refresh(); scheduleSave();
+  const last = document.querySelector('[data-part="' + pi + '"][data-line="' + (state.draft[pi].length - 1) + '"]');
+  if (last) last.focus();
+}
+
+async function importDraft() {
+  if (locked) return;
+  const text = draftText();
+  if (!text) { toast("초안이 비어 있습니다."); return; }
+  if (state.final.trim()) {
+    const r = await dialog({ title: "초안 가져오기", text: "최종본에 쓴 내용이 초안으로 바뀝니다.",
+      buttons: [{ label: "취소", value: null }, { label: "바꾸기", value: "yes", primary: true }] });
+    if (r.value !== "yes") return;
+  }
+  state.final = text;
+  const f = $("final"); f.value = text; f.dataset.len = text.length; grow(f);
+  hangulFlag["final"] = HANGUL.test(text);
+  refresh(); scheduleSave(); f.focus();
+}
+
+// ---------- 이탈·잠금 감시 ----------
+function noteEvent(kind) {
+  if ($("app").hidden || locked) return;
+  const now = Date.now();
+  if (now < suppressLeaveUntil) return;
+  const fam = (k) => (k === "hidden" || k === "blur") ? "leave" : k;
+  const last = state.leaves[state.leaves.length - 1];
+  if (last && now - last.t < 1500 && fam(last.k) === fam(kind)) return;
+  state.leaves.push({ t: now, k: kind });
+  refresh(); save();
+}
+document.addEventListener("visibilitychange", () => { if (document.hidden) noteEvent("hidden"); });
+window.addEventListener("blur", () => { noteEvent("blur"); });
+
+// 화면 분할(Split View): 방향은 그대로인데 폭만 줄어드는 경우
+let lastW = window.innerWidth, lastH = window.innerHeight;
+window.addEventListener("resize", () => {
+  const w = window.innerWidth, h = window.innerHeight;
+  if (h === lastH && w < lastW * 0.85) noteEvent("split");
+  lastW = w; lastH = h;
+});
+
+// 전체 화면 강제 (Safari에서 열었을 때)
+function fsElement() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
+function fsSupported() { const r = document.documentElement; return !!(r.requestFullscreen || r.webkitRequestFullscreen); }
+let fsUnavailable = false;   // 전체 화면을 열 수 없는 기기/브라우저(앱 내 미리보기 등)이면 강제하지 않음
+let fsTries = 0;
+function requestFs() {
+  const r = document.documentElement;
+  try {
+    const p = (r.requestFullscreen || r.webkitRequestFullscreen).call(r);
+    if (p && p.catch) p.catch(() => { fsFallback("전체 화면을 열 수 없는 기기"); });
+  } catch (e) { fsFallback("전체 화면을 열 수 없는 기기"); }
+}
+function fsFallback(why) {
+  if (fsUnavailable) return;
+  fsUnavailable = true; state.fsNote = why; save();
+  setFsLost(false); $("fsSkipWrap").hidden = true;
+  toast("전체 화면 없이 계속합니다. 제출물에 기록됩니다.", 3000);
+}
+function exitFs() {
+  const ex = document.exitFullscreen || document.webkitExitFullscreen;
+  try { if (ex && fsElement()) { const p = ex.call(document); if (p && p.catch) p.catch(() => {}); } } catch (e) {}
+}
+function needFs() { return !fsUnavailable && !!(CONFIG.lock && CONFIG.lock.requireFullscreen) && !ENV.standalone && fsSupported(); }
+function setFsLost(v) {
+  if (v && fsUnavailable) v = false;
+  if (fsLost === v) return;
+  fsLost = v;
+  $("fsOverlay").hidden = !v;
+  const ro = locked || fsLost;
+  document.querySelectorAll("#sheet textarea, #sheet input").forEach((el) => { el.readOnly = ro; });
+}
+function onFsChange() {
+  if (!needFs() || $("app").hidden || locked || state.submitted) { setFsLost(false); return; }
+  if (fsElement()) { setFsLost(false); return; }
+  noteEvent("fullscreen");
+  setFsLost(true);
+}
+document.addEventListener("fullscreenchange", onFsChange);
+document.addEventListener("webkitfullscreenchange", onFsChange);
+
+// 영어 칸에서 한글을 선택하면 선택을 풀기 (선택 메뉴의 '번역'을 쓸 수 없게)
+document.addEventListener("selectionchange", () => {
+  if (!(CONFIG.lock && CONFIG.lock.blockHangulSelection) || $("app").hidden) return;
+  const el = document.activeElement;
+  if (!el || !isWritingField(el)) return;
+  if (el.selectionStart === el.selectionEnd) return;
+  const sel = el.value.slice(el.selectionStart, el.selectionEnd);
+  if (!HANGUL.test(sel)) return;
+  const end = el.selectionEnd;
+  try { el.setSelectionRange(end, end); } catch (e) {}
+  state.hangulSel++; refresh(); scheduleSave();
+  toast("한글은 선택할 수 없습니다. 영어로 작성하세요.");
+});
+
+// ---------- 타이머 ----------
+function remainingSec() {
+  return minutes * 60 + (state.extraSec || 0) - Math.floor((Date.now() - state.startedAt) / 1000);
+}
+function tick() {
+  const r = remainingSec();
+  const t = $("timer");
+  const shown = Math.max(r, 0);
+  t.textContent = pad(Math.floor(shown / 60)) + ":" + pad(shown % 60);
+  t.className = "timer" + (r <= 60 ? " danger" : r <= 300 ? " warn" : "");
+  if (r <= 0 && !locked) timeUp();
+}
+function startTick() { clearInterval(tickTimer); tick(); tickTimer = setInterval(tick, 500); }
+
+function timeUp() {
+  setLocked(true);
+  showBanner("시간이 종료되었습니다. " + (CONFIG.autoSubmitWhenTimeUp ? "제출 중입니다." : "제출 버튼을 눌러 주세요."), true);
+  if (CONFIG.autoSubmitWhenTimeUp) submitNow("시간 종료 자동 제출");
+}
+function setLocked(v) { locked = v; if (v) setFsLost(false); fillFields(); refresh(); }
+function showBanner(msg, danger) {
+  const b = $("banner"); b.textContent = msg; b.hidden = false; b.className = "banner" + (danger ? " danger" : "");
+}
+
+// ---------- 제출 ----------
+function buildBrainstorm() {
+  const s1 = CONFIG.step1Parts.map((p, i) => p + ": " + (state.step1[i] || "").trim()).join("\n");
+  const s2 = CONFIG.step2Items.map((p, i) => step2Label(p) + " " + (state.step2[i] || "").trim()).join("\n");
+  return "[Step 1]\n" + s1 + "\n\n[Step 2]\n" + s2;
+}
+function buildDraft() {
+  let n = 0;
+  return CONFIG.step3Parts.map((p, pi) =>
+    p.title + "\n" + state.draft[pi].map((s) => { n++; return "(" + n + ") " + s.trim(); }).join("\n")
+  ).join("\n\n");
+}
+function buildMeta(reason) {
+  const a = analyze(state.final);
+  const mins = Math.round((Date.now() - state.startedAt) / 60000);
+  const leaves = state.leaves.map((l) => fmtClock(new Date(l.t)).slice(0, 5) + " " + (EVENT_LABEL[l.k] || l.k)).join(", ");
+  return [
+    "최종 문장 " + a.sentences.length,
+    "표현 " + a.used.length + "/" + BANK.length + (a.used.length ? " (" + a.used.map((i) => BANK[i].label).join(", ") + ")" : ""),
+    "초안 문장 " + draftSentenceCount(),
+    "화면이탈 " + state.leaves.length + "회" + (leaves ? " [" + leaves + "]" : ""),
+    "한글입력 " + state.hangul + "회",
+    "한글선택 " + state.hangulSel + "회",
+    "대량입력 " + state.bursts + "회",
+    "환경 " + (ENV.standalone ? "홈화면앱" : "브라우저") + (needFs() ? "(전체화면 강제)" : "") + (state.fsNote ? "(" + state.fsNote + ")" : ""),
+    "소요 " + mins + "분",
+    "제출 " + fmtClock(new Date(state.submittedAt)),
+    reason
+  ].join(" | ");
+}
+
+function openModal() {
+  if (state.submitted) return;
+  const a = analyze(state.final);
+  const rows = [];
+  const okS = a.sentences.length >= CONFIG.requiredSentences, okE = a.used.length >= CONFIG.requiredExpressions;
+  rows.push('<div><span>최종본 문장 수</span><b class="' + (okS ? "good" : "bad") + '">' + a.sentences.length + " / " + CONFIG.requiredSentences + "</b></div>");
+  rows.push('<div><span>Word Bank 표현</span><b class="' + (okE ? "good" : "bad") + '">' + a.used.length + " / " + CONFIG.requiredExpressions + "</b></div>");
+  if (!state.final.trim()) rows.push('<div class="bad"><span>최종본이 비어 있습니다</span></div>');
+  if (a.hangul) rows.push('<div class="bad"><span>최종본에 한글이 들어 있습니다</span></div>');
+  const empty = state.draft.reduce((c, part) => c + part.filter((s) => !s.trim()).length, 0);
+  if (empty) rows.push('<div><span>비어 있는 초안 칸</span><b>' + empty + "</b></div>");
+  $("modalSummary").innerHTML = rows.join("");
+  suppressLeaveUntil = Date.now() + 1000;
+  $("modal").hidden = false; $("modalOk").focus();
+}
+function closeModal() { $("modal").hidden = true; }
+
+async function submitNow(reason) {
+  if (state.submitted) return;
+  closeModal();
+  state.submitted = true; state.submittedAt = Date.now(); state.submitReason = reason;
+  setLocked(true); setFsLost(false); save();
+  showDone();
+  const cfg = CONFIG.submit;
+  if (cfg.formAction && cfg.entries.final) {
+    setDoneStatus("전송 중입니다…", false);
+    try {
+      const body = new URLSearchParams();
+      const put = (k, v) => { if (cfg.entries[k]) body.append(cfg.entries[k], v); };
+      put("sid", state.sid); put("name", state.name);
+      put("brainstorm", buildBrainstorm()); put("draft", buildDraft());
+      put("final", state.final); put("meta", buildMeta(reason));
+      await fetch(cfg.formAction, { method: "POST", mode: "no-cors", body, keepalive: true });
+      state.sent = true; save();
+      setDoneStatus("선생님께 전송했습니다. (" + fmtClock(new Date()) + ")", false);
+    } catch (e) {
+      state.sent = false; save();
+      setDoneStatus("전송하지 못했습니다. 아래 '최종본 복사' 또는 '파일로 저장'을 사용하고 선생님께 알려 주세요.", true);
+    }
+  } else {
+    setDoneStatus("제출이 저장되었습니다. 이 화면을 선생님께 보여 주거나, 아래 버튼으로 복사·저장하세요.", false);
+  }
+}
+function setDoneStatus(msg, bad) { const s = $("doneStatus"); s.textContent = msg; s.className = "done-status" + (bad ? " bad" : ""); }
+
+function showDone() {
+  $("app").hidden = true; $("gate").hidden = true; $("done").hidden = false;
+  const a = analyze(state.final);
+  $("doneGrid").innerHTML = [
+    ["학번", state.sid], ["이름", state.name],
+    ["제출 시각", fmtClock(new Date(state.submittedAt)).slice(0, 5)],
+    ["문장 수", a.sentences.length], ["표현", a.used.length + "/" + BANK.length],
+    ["화면 이탈", state.leaves.length + "회", state.leaves.length > 0],
+    ["한글 입력", state.hangul + "회", state.hangul > 0],
+    ["한글 선택", state.hangulSel + "회", state.hangulSel > 0]
+  ].map((r) => '<div class="' + (r[2] ? "bad" : "") + '">' + r[0] + "<b>" + escapeHtml(String(r[1])) + "</b></div>").join("");
+  $("doneText").innerHTML = state.final.trim() ? highlight(state.final) : '<span style="color:var(--muted)">(최종본이 비어 있습니다)</span>';
+  if (state.sent === true) setDoneStatus("선생님께 전송했습니다.", false);
+  else if (state.sent === false) setDoneStatus("전송하지 못했습니다. 아래 '최종본 복사' 또는 '파일로 저장'을 사용하고 선생님께 알려 주세요.", true);
+  else setDoneStatus("제출이 저장되었습니다.", false);
+  window.scrollTo(0, 0);
+}
+
+function fullText() {
+  return CONFIG.subtitle + " - " + CONFIG.title + "\n학번: " + state.sid + "  이름: " + state.name + "\n\n" +
+    buildBrainstorm() + "\n\n[Step 3 초안]\n" + buildDraft() + "\n\n[Step 4 최종본]\n" + state.final + "\n\n[자동 집계]\n" + buildMeta(state.submitReason);
+}
+async function copyFinal() {
+  const text = state.final;
+  try { await navigator.clipboard.writeText(text); toast("최종본을 복사했습니다."); }
+  catch (e) {
+    const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); toast("최종본을 복사했습니다."); } catch (e2) { toast("복사할 수 없습니다. 파일로 저장을 사용하세요."); }
+    ta.remove();
+  }
+}
+function saveFile() {
+  const blob = new Blob([fullText()], { type: "text/plain;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = state.sid + "_" + state.name + "_영어쓰기.txt";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+// ---------- 공용 대화상자 (prompt/confirm 대신: 전체 화면·홈 화면 앱에서도 안전) ----------
+function dialog(o) {
+  return new Promise((resolve) => {
+    const box = $("dlg"), inp = $("dlgInput"), acts = $("dlgActions");
+    $("dlgTitle").textContent = o.title || "";
+    $("dlgText").textContent = o.text || ""; $("dlgText").hidden = !o.text;
+    inp.hidden = !o.input; inp.value = "";
+    if (o.input) { inp.type = o.input.password ? "password" : "text"; inp.placeholder = o.input.placeholder || ""; inp.inputMode = o.input.numeric ? "numeric" : "text"; }
+    acts.innerHTML = "";
+    const finish = (v) => { box.hidden = true; resolve({ value: v, input: inp.value }); };
+    o.buttons.forEach((b) => {
+      const btn = document.createElement("button");
+      btn.className = "btn" + (b.primary ? " primary" : ""); btn.textContent = b.label;
+      btn.addEventListener("click", () => finish(b.value)); acts.appendChild(btn);
+    });
+    inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); const prim = o.buttons.find((b) => b.primary); finish(prim ? prim.value : null); } };
+    // 앞선 대화상자의 키 입력이 새 버튼에 전달되지 않도록 한 박자 뒤에 연다
+    setTimeout(() => {
+      box.hidden = false;
+      if (o.input) inp.focus(); else { const prim = acts.querySelector(".primary") || acts.lastChild; if (prim) prim.focus(); }
+    }, 60);
+  });
+}
+
+// ---------- 교사 메뉴 ----------
+async function teacherMenu() {
+  if (!CONFIG.teacherPin) return;
+  suppressLeaveUntil = Date.now() + 120000;
+  try {
+    const r = await dialog({ title: "교사 확인", input: { placeholder: "PIN", password: true, numeric: true },
+      buttons: [{ label: "취소", value: null }, { label: "확인", value: "ok", primary: true }] });
+    if (r.value !== "ok") return;
+    if (r.input !== CONFIG.teacherPin) { toast("PIN이 맞지 않습니다."); return; }
+    const who = state.sid ? state.sid + " " + state.name : "(시작 전)";
+    const c = await dialog({ title: "교사 메뉴", text: who + " · 남은 시간 " + (state.startedAt ? Math.max(0, Math.ceil(remainingSec() / 60)) + "분" : "-"),
+      buttons: [{ label: "5분 추가", value: "1" }, { label: "잠금 해제 + 5분", value: "2" }, { label: "데이터 삭제", value: "3" }, { label: "닫기", value: null }] });
+    if (!state.startedAt) return;
+    if (c.value === "1") { state.extraSec = (state.extraSec || 0) + 300; save(); tick(); toast("5분을 추가했습니다."); }
+    else if (c.value === "2") {
+      state.submitted = false; state.sent = null; state.submitReason = "";
+      if (remainingSec() <= 0) state.extraSec = (state.extraSec || 0) + (-remainingSec()) + 300;
+      save();
+      $("done").hidden = true; $("app").hidden = false; $("banner").hidden = true;
+      setLocked(false); startTick(); toast("잠금을 해제했습니다."); setTimeout(onFsChange, 300);
+    }
+    else if (c.value === "3") {
+      const ok = await dialog({ title: "데이터 삭제", text: who + " 학생의 저장 데이터를 지우고 처음부터 다시 시작합니다.",
+        buttons: [{ label: "취소", value: null }, { label: "삭제", value: "yes", primary: true }] });
+      if (ok.value === "yes") { localStorage.removeItem(storageKey()); location.reload(); }
+    }
+  } finally { suppressLeaveUntil = Date.now() + 1500; }
+}
+
+// ---------- 시작 ----------
+function newState(sid, name) {
+  state.sid = sid; state.name = name; state.startedAt = Date.now(); state.extraSec = 0;
+  state.step1 = CONFIG.step1Parts.map(() => "");
+  state.step2 = CONFIG.step2Items.map(() => "");
+  state.draft = CONFIG.step3Parts.map((p) => Array.from({ length: p.min }, () => ""));
+  state.final = ""; state.leaves = []; state.hangul = 0; state.bursts = 0; state.hangulSel = 0;
+  state.submitted = false; state.submittedAt = 0; state.submitReason = ""; state.sent = null;
+}
+function restoreState(saved) {
+  Object.assign(state, saved);
+  // 설정이 바뀐 경우를 대비해 길이 맞추기
+  state.step1 = CONFIG.step1Parts.map((p, i) => (state.step1 || [])[i] || "");
+  state.step2 = CONFIG.step2Items.map((p, i) => (state.step2 || [])[i] || "");
+  state.draft = CONFIG.step3Parts.map((p, pi) => {
+    const arr = ((state.draft || [])[pi] || []).slice();
+    while (arr.length < p.min) arr.push("");
+    return arr;
+  });
+  state.leaves = state.leaves || [];
+  state.hangulSel = state.hangulSel || 0;
+}
+
+function start() {
+  const sid = $("sid").value.trim(), name = $("name").value.trim();
+  const note = $("gateNote");
+  if (!/^\d{3,}$/.test(sid)) { note.textContent = "학번을 숫자로 입력하세요."; note.className = "gate-note error"; $("sid").focus(); return; }
+  if (!name) { note.textContent = "이름을 입력하세요."; note.className = "gate-note error"; $("name").focus(); return; }
+  const saved = load(sid);
+  if (saved && saved.startedAt) { restoreState(saved); if (name && name !== state.name) state.name = name; }
+  else newState(sid, name);
+  state.env = ENV.standalone ? "home" : "browser";
+
+  if (state.submitted) { showDone(); return; }
+  $("gate").hidden = true; $("app").hidden = false;
+  locked = false;
+  if (needFs() && !fsElement()) requestFs();   // 시작 버튼 클릭이 사용자 동작이므로 여기서 요청
+  fillFields();
+  document.querySelectorAll("[data-part], #final").forEach((el) => {
+    el.dataset.len = el.value.length;
+    hangulFlag[el.id || (el.dataset.part + ":" + el.dataset.line)] = HANGUL.test(el.value);
+  });
+  refresh(); save(); startTick();
+  if (saved && saved.startedAt) toast("이어서 작성합니다. 남은 시간은 그대로입니다.", 3000);
+  window.scrollTo(0, 0);
+  if (needFs()) setTimeout(() => { if (needFs() && !fsElement()) { suppressLeaveUntil = Date.now() + 500; setFsLost(true); } }, 800);
+}
+
+function init() {
+  const q = new URLSearchParams(location.search);
+  if (q.get("min") && +q.get("min") > 0) minutes = +q.get("min");
+  if (q.get("home") === "1") CONFIG.lock.requireHomeScreen = true;
+  renderStatic();
+
+  // 실행 환경 표시 / 홈 화면 앱 요구
+  const envBadge = $("stEnv");
+  envBadge.hidden = false;
+  envBadge.textContent = ENV.standalone ? "홈 화면 앱" : (needFs() ? "전체 화면 모드" : "브라우저");
+  if (CONFIG.lock.requireHomeScreen && !ENV.standalone) {
+    $("homeGuide").hidden = false; $("gateForm").hidden = true; $("startBtn").hidden = true; $("gateNote").hidden = true;
+  }
+  $("fsResume").addEventListener("click", () => {
+    requestFs();
+    setTimeout(() => { onFsChange(); if (!fsElement() && needFs()) { fsTries++; if (fsTries >= 1) $("fsSkipWrap").hidden = false; } }, 700);
+  });
+  $("fsSkip").addEventListener("click", () => fsFallback("전체 화면 사용 불가 (학생이 없이 계속 선택)"));
+
+  document.addEventListener("input", onInput);
+  document.addEventListener("paste", blockPaste, true);
+  document.addEventListener("drop", blockPaste, true);
+  document.addEventListener("beforeinput", (e) => {
+    if (!$("app").hidden && (e.inputType === "insertFromPaste" || e.inputType === "insertFromDrop")) { e.preventDefault(); toast("붙여넣기는 사용할 수 없습니다. 직접 입력하세요."); }
+  }, true);
+  document.addEventListener("click", (e) => {
+    const add = e.target.closest("[data-add]"); if (add) addLine(+add.dataset.add);
+  });
+  // 초안 칸에서 Enter = 다음 문장 칸으로
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && e.target.matches("[data-part]")) {
+      e.preventDefault();
+      const pi = +e.target.dataset.part, li = +e.target.dataset.line;
+      const next = document.querySelector('[data-part="' + pi + '"][data-line="' + (li + 1) + '"]') ||
+        document.querySelector('[data-part="' + (pi + 1) + '"][data-line="0"]') || $("final");
+      if (next) next.focus();
+    }
+  });
+
+  $("startBtn").addEventListener("click", start);
+  $("name").addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
+  $("sid").addEventListener("input", () => {
+    const saved = load($("sid").value.trim()); const note = $("gateNote");
+    if (saved && saved.startedAt) { note.textContent = saved.submitted ? "이미 제출한 학번입니다. 시작하면 제출 화면이 열립니다." : "저장된 글이 있습니다. 시작하면 이어서 작성합니다."; note.className = "gate-note"; }
+    else { note.textContent = ""; note.className = "gate-note"; }
+  });
+  $("importBtn").addEventListener("click", importDraft);
+  $("submitBtn").addEventListener("click", openModal);
+  $("submitTop").addEventListener("click", openModal);
+  $("modalCancel").addEventListener("click", closeModal);
+  $("modalOk").addEventListener("click", () => submitNow("학생 제출"));
+  $("copyBtn").addEventListener("click", copyFinal);
+  $("saveBtn").addEventListener("click", saveFile);
+  $("teacherBtn").addEventListener("click", teacherMenu);
+  $("teacherBtn2").addEventListener("click", teacherMenu);
+  $("teacherBtn3").addEventListener("click", teacherMenu);
+
+  const root = document.documentElement;
+  const req = root.requestFullscreen || root.webkitRequestFullscreen;
+  if (req && !needFs()) {
+    $("fsBtn").hidden = false;
+    $("fsBtn").addEventListener("click", () => {
+      const exit = document.exitFullscreen || document.webkitExitFullscreen;
+      if (document.fullscreenElement || document.webkitFullscreenElement) exit.call(document);
+      else req.call(root);
+    });
+  }
+  window.addEventListener("resize", () => document.querySelectorAll("textarea").forEach(grow));
+  $("sid").focus();
+}
+init();
+
+</script>
+</body>
+</html>
