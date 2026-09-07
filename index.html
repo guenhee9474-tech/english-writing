@@ -536,8 +536,14 @@ const CONFIG = {
       re: /\b(?:reasons?\s+why|(?:place|places|room|rooms|space|spaces|area|areas|park|parks|school|library)\s+where)\b/i }
   ],
 
-  // 구글 설문지 연동 (비워 두면 복사/저장 버튼만 사용)
+  // 제출물 보내기
   submit: {
+    // (권장) Apps Script 웹 앱 주소. 제출물이 PDF/Word로 바뀌어 드라이브에 저장되고 메일로 옵니다.
+    // 함께 드린 Code.gs 파일의 설치 안내를 따라 배포한 뒤 나오는 .../exec 주소를 넣으세요.
+    scriptUrl: "https://script.google.com/macros/s/AKfycbzq2ub-CXiHUErkWcvN7YgPbNacIoDZZlT6jNsRSKB6G1nWOivxRzfjlAIp83kQdPvl4Q/exec",
+    token: "gfa2026",            // Code.gs 의 CFG.token 과 같아야 합니다.
+
+    // (대안) 구글 설문지로 받기. scriptUrl 을 쓰면 이 부분은 비워 두세요.
     formAction: "",              // 예: "https://docs.google.com/forms/d/e/1FAIpQLSe.../formResponse"
     entries: {                   // 예: "entry.1234567890"
       sid: "", name: "", brainstorm: "", draft: "", final: "", meta: ""
@@ -1003,15 +1009,23 @@ async function submitNow(reason) {
   setLocked(true); setFsLost(false); save();
   showDone();
   const cfg = CONFIG.submit;
-  if (cfg.formAction && cfg.entries.final) {
+  if (cfg.scriptUrl || (cfg.formAction && cfg.entries.final)) {
     setDoneStatus("전송 중입니다…", false);
     try {
       const body = new URLSearchParams();
-      const put = (k, v) => { if (cfg.entries[k]) body.append(cfg.entries[k], v); };
-      put("sid", state.sid); put("name", state.name);
-      put("brainstorm", buildBrainstorm()); put("draft", buildDraft());
-      put("final", state.final); put("meta", buildMeta(reason));
-      await fetch(cfg.formAction, { method: "POST", mode: "no-cors", body, keepalive: true });
+      if (cfg.scriptUrl) {
+        body.append("token", cfg.token || "");
+        body.append("sid", state.sid); body.append("name", state.name);
+        body.append("title", CONFIG.title); body.append("subtitle", CONFIG.subtitle);
+        body.append("brainstorm", buildBrainstorm()); body.append("draft", buildDraft());
+        body.append("final", state.final); body.append("meta", buildMeta(reason));
+      } else {
+        const put = (k, v) => { if (cfg.entries[k]) body.append(cfg.entries[k], v); };
+        put("sid", state.sid); put("name", state.name);
+        put("brainstorm", buildBrainstorm()); put("draft", buildDraft());
+        put("final", state.final); put("meta", buildMeta(reason));
+      }
+      await fetch(cfg.scriptUrl || cfg.formAction, { method: "POST", mode: "no-cors", body, keepalive: true });
       state.sent = true; save();
       setDoneStatus("선생님께 전송했습니다. (" + fmtClock(new Date()) + ")", false);
     } catch (e) {
