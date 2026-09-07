@@ -244,6 +244,20 @@
   .fs-overlay p{color:var(--muted);font-size:15px;margin-bottom:18px}
   .fs-overlay .btn.primary{padding:13px 28px;font-size:17px}
   .modal.dlg{z-index:60}
+  .dict-pop{position:fixed;right:16px;bottom:16px;width:360px;max-width:calc(100vw - 24px);background:var(--surface);border:1px solid var(--line-strong);border-radius:12px;padding:14px 16px;box-shadow:0 8px 24px rgba(27,36,54,.14);z-index:35}
+  @media (max-width:640px){.dict-pop{right:8px;left:8px;bottom:8px;width:auto}}
+  .dict-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .dict-head b{font-size:14px}
+  .dict-count{font-size:12px;color:var(--muted);margin-left:auto;font-variant-numeric:tabular-nums}
+  .dict-row{display:flex;gap:6px}
+  .dict-row input{flex:1;border:1px solid var(--line-strong);border-radius:8px;padding:8px 10px;font-size:16px}
+  .dict-row input:focus{border-color:var(--accent)}
+  .dict-out{margin-top:10px;display:grid;gap:4px;max-height:200px;overflow:auto;font-family:var(--serif);font-size:15px}
+  .dict-item{display:flex;gap:8px;align-items:baseline;border-bottom:1px solid var(--line);padding:4px 0}
+  .dict-item .q{color:var(--muted);font-family:var(--sans);font-size:14px}
+  .dict-item b{font-weight:600}
+  .dict-item.err{color:var(--danger);font-family:var(--sans);font-size:13px}
+  .dict-note{font-size:12px;color:var(--muted);margin-top:8px}
   .dlg-input{width:100%;border:1px solid var(--line-strong);border-radius:8px;padding:10px 12px;font-size:18px;margin-bottom:16px;letter-spacing:2px}
   .dlg-input:focus{border-color:var(--accent)}
   .dlg .modal-actions{flex-wrap:wrap}
@@ -320,6 +334,7 @@
     </div>
     <div class="timer-wrap" id="timerWrap"><span class="phase-label" id="phaseLabel"></span><div class="timer" id="timer" aria-live="off">--:--</div></div>
     <div class="top-actions">
+      <button id="dictTop" class="btn small" hidden>사전</button>
       <button id="fsBtn" class="btn ghost small" hidden>전체 화면</button>
       <button id="submitTop" class="btn primary small">제출</button>
     </div>
@@ -469,6 +484,17 @@
   </div>
 </div>
 
+<!-- 단어 사전 (잠금 단계에서 허용되는 유일한 외부 조회) -->
+<div id="dictPop" class="dict-pop" hidden>
+  <div class="dict-head"><b>단어 사전</b><span id="dictCount" class="dict-count"></span><button id="dictClose" class="link" type="button">닫기</button></div>
+  <div class="dict-row">
+    <input id="dictQ" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="단어 하나만 (예: 경사로 / ramp)">
+    <button id="dictBtn" class="btn small primary" type="button">찾기</button>
+  </div>
+  <div id="dictOut" class="dict-out"></div>
+  <p class="dict-note">한 번에 단어 하나만 찾을 수 있고, 찾은 단어는 모두 제출물에 기록됩니다.</p>
+</div>
+
 <div id="toast" class="toast" hidden></div>
 
 <script>
@@ -487,6 +513,10 @@ const CONFIG = {
   requiredSentences: 9,        // 최종본 필요 문장 수
   requiredExpressions: 5,      // Word Bank 필요 표현 수
   teacherPin: "0000",          // ★ 꼭 바꾸세요. 비워 두면("") 교사 메뉴가 꺼집니다.
+
+  // 단어 사전: 잠금 단계에서 허용되는 유일한 조회. 단어 하나(띄어쓰기 없음, maxLen 이하)만 서버(Apps Script 번역)에 물어보고,
+  // 찾은 단어는 모두 기록됩니다. phases 에 적힌 단계에서만 버튼이 보입니다.
+  dictionary: { enabled: true, phases: ["draft", "final"], maxPerPhase: 30, maxLen: 20 },
 
   lock: {
     requireHomeScreen: false,   // true: "홈 화면에 추가"한 앱(주소창·탭 없음)으로 열었을 때만 시작. 주소 뒤 ?home=1 로도 켤 수 있음
@@ -643,7 +673,7 @@ function analyze(text) {
 const state = {
   sid: "", name: "", startedAt: 0, extraSec: 0,
   step1: [], step2: [], draft: [], final: "",
-  leaves: [], hangul: 0, bursts: 0, hangulSel: 0, env: "", fsNote: "",
+  leaves: [], hangul: 0, bursts: 0, hangulSel: 0, env: "", fsNote: "", lookups: [],
   submitted: false, submittedAt: 0, submitReason: "", sent: null,
   phase: "research", phaseStartedAt: 0, phaseLog: {}, savedAt: 0,
   draftSubmittedAt: 0, draftReason: "", draftSent: null, allowFullFlow: false
@@ -820,6 +850,7 @@ function refresh() {
     '<div class="' + (state.hangul ? "bad" : "") + '">영어 칸 한글 입력 <b>' + state.hangul + "</b>회</div>" +
     '<div class="' + (state.bursts ? "bad" : "") + '">대량 입력 <b>' + state.bursts + "</b>회</div>" +
     '<div class="' + (state.hangulSel ? "bad" : "") + '">한글 선택 <b>' + state.hangulSel + "</b>회</div>" +
+    "<div>사전 조회 <b>" + (state.lookups || []).length + "</b>회</div>" +
     "<div>초안 문장 <b>" + draftSentenceCount() + "</b>개</div>" +
     "<div>실행 환경 <b>" + (ENV.standalone ? "홈 화면 앱" : "브라우저") + "</b></div>";
 }
@@ -866,6 +897,10 @@ function applyPhase() {
   const label = ph === "research" ? "초안 쓰기 시작" : ph === "draft" ? "초안 제출" : "최종 제출";
   $("submitBtn").textContent = label; $("submitTop").textContent = ph === "research" ? "초안 시작" : "제출";
   $("phaseLabel").textContent = PHASE_LABEL[ph] || "";
+
+  $("dictTop").hidden = !dictAllowed();
+  if (!dictAllowed()) $("dictPop").hidden = true;
+  updateDictCount();
 
   const badge = $("stPhase");
   badge.hidden = false;
@@ -1102,6 +1137,8 @@ function buildMeta(reason, kind) {
   parts.push("초안 문장 " + dCount + " (표현 " + dUsed + ")");
   parts.push("화면이탈 " + state.leaves.length + "회" + (leaves ? " [" + leaves + "]" : ""));
   parts.push("한글입력 " + state.hangul + "회", "한글선택 " + state.hangulSel + "회", "대량입력 " + state.bursts + "회");
+  const lk = state.lookups || [];
+  parts.push("사전 " + lk.length + "회" + (lk.length ? " [" + lk.map((l) => l.q + "→" + l.a).join(", ") + "]" : ""));
   parts.push("환경 " + (ENV.standalone ? "홈화면앱" : "브라우저") + (state.fsNote ? "(" + state.fsNote + ")" : ""));
   parts.push("소요 조사 " + mins(L.researchStart, L.researchEnd) + " / 초안 " + mins(L.draftStart, L.draftEnd) + " / 최종 " + mins(L.finalStart, L.finalEnd));
   if (state.draftSubmittedAt) parts.push("1회차 제출 " + fmtClock(new Date(state.draftSubmittedAt)).slice(0, 5) + " (" + (state.draftReason || "") + ")");
@@ -1284,7 +1321,8 @@ function showDone(kind) {
     [isDraft ? "초안 문장" : "문장 수", a.sentences.length], ["표현", a.used.length + "/" + BANK.length],
     ["화면 이탈", state.leaves.length + "회", state.leaves.length > 0],
     ["한글 입력", state.hangul + "회", state.hangul > 0],
-    ["한글 선택", state.hangulSel + "회", state.hangulSel > 0]];
+    ["한글 선택", state.hangulSel + "회", state.hangulSel > 0],
+    ["사전 조회", (state.lookups || []).length + "회"]];
   $("doneGrid").innerHTML = rows.map((r) => '<div class="' + (r[2] ? "bad" : "") + '">' + r[0] + "<b>" + escapeHtml(String(r[1])) + "</b></div>").join("");
   $("doneText").innerHTML = text.trim() ? highlight(text) : '<span style="color:var(--muted)">(비어 있습니다)</span>';
   const sent = isDraft ? state.draftSent : state.sent;
@@ -1313,6 +1351,53 @@ function saveFile() {
   a.href = URL.createObjectURL(blob); a.download = state.sid + "_" + state.name + "_영어쓰기.txt";
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+// ---------- 단어 사전 ----------
+function dictCfg() { return CONFIG.dictionary || {}; }
+function dictAllowed() {
+  const c = dictCfg();
+  return !!(c.enabled && CONFIG.submit.scriptUrl) && !$("app").hidden && !locked && (c.phases || []).includes(state.phase);
+}
+function dictUsedThisPhase() { return (state.lookups || []).filter((l) => l.p === state.phase).length; }
+function updateDictCount() {
+  const c = dictCfg(); const used = dictUsedThisPhase();
+  $("dictCount").textContent = (c.maxPerPhase ? used + " / " + c.maxPerPhase + "회" : used + "회");
+  $("dictBtn").disabled = !!(c.maxPerPhase && used >= c.maxPerPhase);
+}
+function renderDictOut() {
+  const items = (state.lookups || []).filter((l) => l.p === state.phase).slice(-8).reverse();
+  $("dictOut").innerHTML = items.map((l) => '<div class="dict-item"><span class="q">' + escapeHtml(l.q) + "</span>→<b>" + escapeHtml(l.a) + "</b></div>").join("");
+}
+function toggleDict(show) {
+  const pop = $("dictPop");
+  pop.hidden = show === undefined ? !pop.hidden : !show;
+  if (!pop.hidden) { renderDictOut(); updateDictCount(); $("dictQ").focus(); }
+}
+async function dictLookup() {
+  if (!dictAllowed()) return;
+  const c = dictCfg();
+  const q = $("dictQ").value.trim();
+  if (!q) return;
+  if (/\s/.test(q) || q.length > (c.maxLen || 20) || !/^[A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ'\-]+$/.test(q)) {
+    $("dictOut").insertAdjacentHTML("afterbegin", '<div class="dict-item err">단어 하나만 찾을 수 있습니다. (띄어쓰기·문장 불가)</div>');
+    return;
+  }
+  if (c.maxPerPhase && dictUsedThisPhase() >= c.maxPerPhase) { toast("이 단계에서 찾을 수 있는 횟수를 다 썼습니다."); return; }
+  $("dictBtn").disabled = true; $("dictBtn").textContent = "찾는 중…";
+  try {
+    const r = await jsonp({ action: "dict", q, sid: state.sid, name: state.name, phase: state.phase }, 9000);
+    if (!r || r.error) throw new Error(r && r.error || "no result");
+    state.lookups.push({ t: Date.now(), p: state.phase, q: r.q || q, a: r.a || "" });
+    save(); markDirty(); refresh();
+    $("dictQ").value = "";
+    renderDictOut(); updateDictCount();
+  } catch (e) {
+    const msg = String(e.message || "");
+    $("dictOut").insertAdjacentHTML("afterbegin", '<div class="dict-item err">' + (msg === "LIMIT" ? "찾을 수 있는 횟수를 다 썼습니다." : msg === "BAD_QUERY" ? "단어 하나만 찾을 수 있습니다." : "지금은 찾을 수 없습니다. 잠시 후 다시 해 보세요.") + "</div>");
+  } finally {
+    $("dictBtn").textContent = "찾기"; updateDictCount(); $("dictQ").focus();
+  }
 }
 
 // ---------- 공용 대화상자 ----------
@@ -1411,7 +1496,7 @@ function newState(sid, name) {
   state.final = ""; state.leaves = []; state.hangul = 0; state.bursts = 0; state.hangulSel = 0;
   state.submitted = false; state.submittedAt = 0; state.submitReason = ""; state.sent = null;
   state.phase = "research"; state.phaseStartedAt = 0; state.phaseLog = {}; state.savedAt = 0;
-  state.draftSubmittedAt = 0; state.draftReason = ""; state.draftSent = null; state.allowFullFlow = false; state.fsNote = "";
+  state.draftSubmittedAt = 0; state.draftReason = ""; state.draftSent = null; state.allowFullFlow = false; state.fsNote = ""; state.lookups = [];
 }
 function restoreState(saved) {
   Object.assign(state, saved);
@@ -1422,7 +1507,7 @@ function restoreState(saved) {
     while (arr.length < p.min) arr.push("");
     return arr;
   });
-  state.leaves = state.leaves || []; state.hangulSel = state.hangulSel || 0;
+  state.leaves = state.leaves || []; state.hangulSel = state.hangulSel || 0; state.lookups = state.lookups || [];
   state.phase = state.phase || (state.submitted ? "done" : "research");
   state.phaseLog = state.phaseLog || {};
 }
@@ -1526,6 +1611,10 @@ function init() {
   });
   $("startDraftBtn").addEventListener("click", () => startDraft(true));
   $("importBtn").addEventListener("click", importDraft);
+  $("dictTop").addEventListener("click", () => toggleDict());
+  $("dictClose").addEventListener("click", () => toggleDict(false));
+  $("dictBtn").addEventListener("click", dictLookup);
+  $("dictQ").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); dictLookup(); } });
   $("submitBtn").addEventListener("click", openModal);
   $("submitTop").addEventListener("click", openModal);
   $("modalCancel").addEventListener("click", closeModal);
