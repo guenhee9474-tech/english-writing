@@ -24,19 +24,18 @@
          (홈 화면 앱은 Safari와 저장 공간이 달라서, 당일에는 반드시 아이콘으로만 열게 하세요.)
       ② 앱 전환 차단: iPad의 사용 지침(설정 > 손쉬운 사용 > 사용 지침, 상단 버튼 3번 클릭)이나
          Apple 교실 "앱 고정"으로 그 앱에 고정합니다. 이것만은 웹페이지가 대신할 수 없습니다.
-      ③ 페이지 자체 감시: Safari에서 열었을 때는 전체 화면이어야 입력이 되고(requireFullscreen),
-         탭/앱 전환·전체 화면 해제·화면 분할·한글 선택을 감지해 시각과 함께 제출물에 남깁니다.
+      ③ 페이지 자체 감시: 초안·최종 단계에서 탭/앱 전환·화면 분할·한글 선택을 감지해 시각과 함께 제출물에 남깁니다.
          붙여넣기는 막혀 있고, 영어 칸에서 한글을 선택하면 선택이 풀립니다(번역 메뉴 차단용).
-   4) 제출물 받기 (둘 중 하나)
-      - 구글 설문지 연동: CONFIG.submit 에 설문지 주소와 entry 번호를 넣으면
-        제출 버튼을 누를 때 응답이 설문지(→ 시트)로 전송됩니다.
-        설문지 만들기: 단답형 "학번", "이름", 장문형 "브레인스토밍", "초안", "최종본", "자동집계"
-        설정 > 응답에서 "이메일 수집" 끄기, "응답 1회로 제한" 끄기
-        entry 번호 찾기: 설문지 우측 상단 ⋮ > "미리 채워진 링크 받기" > 아무 값이나 넣고 링크 복사
-        → 링크 속 entry.123456789=... 부분이 각 문항의 번호입니다.
-        formAction: 링크의 /viewform 을 /formResponse 로 바꾼 주소
-      - 연동을 안 하면: 제출 화면에서 "복사" / "파일로 저장" 버튼으로 받습니다.
-   5) 교사 PIN(기본 0000)은 꼭 바꾸세요. 화면 아래 "교사" 버튼 > PIN 입력 > 시간 추가 / 잠금 해제 / 데이터 삭제
+         (전체 화면 강제는 iPad Safari에서 글자 칸을 누르면 저절로 풀리는 문제가 있어 iPad에서는 쓰지 않습니다.)
+   4) 제출물 받기: CONFIG.submit.scriptUrl 에 Apps Script 웹 앱 주소(Code.gs 참고)를 넣으면
+      1회차 초안은 선생님 시트에 저장되고, 2회차 최종본은 PDF로 드라이브 폴더에 올라갑니다.
+      연동을 안 하면 제출 화면에서 "복사" / "파일로 저장" 버튼으로 받습니다.
+   5) 교사 PIN(기본 0000)은 꼭 바꾸세요. 화면 아래 "교사" 버튼 > PIN 입력 > 시간 추가 / 잠금 해제 / 단계 넘기기 / 데이터 삭제
+   6) 활동은 두 번에 나눠 합니다.
+      1회차: 조사·브레인스토밍(Step 1-2, 외부 접속 허용) → "초안 쓰기 시작" 버튼 → 초안(Step 3, 잠금) → 초안 제출
+      2회차: 같은 주소에서 같은 학번·이름으로 열면 초안이 나타나고(수정 불가), 최종본(Step 4, 잠금)만 씁니다.
+      회차는 세 가지 방법으로 정합니다. 우선순위: 주소 ?session=2  >  Apps Script의 openSession2() 실행  >  CONFIG.session
+      초안은 제출 시 Apps Script에도 저장되므로 다른 아이패드에서 열어도 이어집니다.
   ══════════════════════════════════════════════════════════════════
 -->
 <style>
@@ -219,6 +218,17 @@
   @media (prefers-reduced-motion:reduce){.chip,.meter i{transition:none}}
 
   .foot{text-align:center;padding:6px 0 26px}
+  .timer-wrap{display:flex;flex-direction:column;align-items:flex-end;line-height:1.1}
+  .phase-label{font-size:11px;color:var(--muted);white-space:nowrap}
+  .stat.phase.open{border-color:#2F6FDB;color:#2457B3;background:#E9F0FC}
+  .stat.phase.lock{border-color:var(--warn);color:var(--warn);background:var(--warn-soft)}
+  .start-box{border:1px dashed var(--line-strong);border-radius:10px;padding:18px 16px;text-align:center}
+  .start-box p{color:var(--muted);font-size:14px;margin-bottom:12px}
+  .start-box .btn.primary{padding:12px 24px;font-size:16px}
+  .ro-tag{display:inline-block;font-size:11px;color:var(--warn);border:1px solid var(--warn);border-radius:999px;padding:0 8px;margin-left:8px;vertical-align:middle;font-weight:500}
+  .step.ro textarea,.step.ro input{background:var(--bg) !important;color:var(--muted);border-color:var(--line) !important}
+  .session-box{font-size:14px;color:var(--ink);background:var(--bg);border-radius:8px;padding:10px 12px;margin:-8px 0 16px}
+  .session-box b{font-weight:600}
 
   /* 잠금 관련 */
   .stat.env{border-style:dashed}
@@ -270,7 +280,13 @@
   <div class="gate-card">
     <p class="kicker" id="gateKicker"></p>
     <h1 class="gate-title" id="gateTitle"></h1>
+    <div class="session-box" id="sessionBox"></div>
     <ul class="rules" id="rules"></ul>
+    <div id="noDraft" class="home-guide" hidden>
+      <b>1회차 초안을 찾을 수 없습니다.</b>
+      <p style="margin:0 0 10px">학번과 이름이 1회차 때와 같은지 확인하세요. 같은데도 안 나오면 선생님께 알려 주세요.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button id="retryBtn" class="btn small">다시 확인</button><button id="teacherBtn4" class="btn small">교사</button></div>
+    </div>
     <div id="homeGuide" class="home-guide" hidden>
       <b>홈 화면 앱으로 열어야 시작할 수 있습니다.</b>
       <ol>
@@ -300,9 +316,10 @@
       <span class="stat" id="stSent"><b>0</b>문장</span>
       <span class="stat" id="stExpr"><b>0</b>표현</span>
       <span class="stat" id="stLeave" hidden><b>0</b>이탈</span>
+      <span class="stat phase" id="stPhase" hidden></span>
       <span class="stat env" id="stEnv" hidden></span>
     </div>
-    <div class="timer" id="timer" aria-live="off">--:--</div>
+    <div class="timer-wrap" id="timerWrap"><span class="phase-label" id="phaseLabel"></span><div class="timer" id="timer" aria-live="off">--:--</div></div>
     <div class="top-actions">
       <button id="fsBtn" class="btn ghost small" hidden>전체 화면</button>
       <button id="submitTop" class="btn primary small">제출</button>
@@ -315,7 +332,7 @@
       <section class="step" id="step1">
         <div class="step-no">Step 1</div>
         <div>
-          <h2>예시 분석하기</h2>
+          <h2>예시 분석하기<span class="ro-tag" hidden>1회차 작성분 · 수정 불가</span></h2>
           <p class="desc" id="d1"></p>
           <div class="step-body">
             <div class="example" id="example"></div>
@@ -327,7 +344,7 @@
       <section class="step" id="step2">
         <div class="step-no">Step 2</div>
         <div>
-          <h2>조사 및 브레인스토밍</h2>
+          <h2>조사 및 브레인스토밍<span class="ro-tag" hidden>1회차 작성분 · 수정 불가</span></h2>
           <p class="desc" id="d2"></p>
           <div class="step-body">
             <div class="wb-inline" id="ideaBox"><b>Idea Bank</b><div class="list" id="ideaList"></div></div>
@@ -339,16 +356,20 @@
       <section class="step" id="step3">
         <div class="step-no">Step 3</div>
         <div>
-          <h2>초안 쓰기</h2>
+          <h2>초안 쓰기<span class="ro-tag" hidden>1회차 작성분 · 수정 불가</span></h2>
           <p class="desc" id="step3Desc"></p>
-          <div class="step-body">
+          <div class="step-body start-box" id="step3Start" hidden>
+            <p>조사와 브레인스토밍이 끝났으면 초안 쓰기를 시작하세요.<br>시작한 뒤에는 다른 앱이나 탭으로 나가면 기록되고, 붙여넣기와 검색을 쓸 수 없습니다.</p>
+            <button id="startDraftBtn" class="btn primary" type="button">초안 쓰기 시작</button>
+          </div>
+          <div class="step-body" id="step3Body">
             <div class="wb-inline"><b>Word Bank</b><div class="list" id="wbList"></div></div>
             <div id="parts"></div>
           </div>
         </div>
       </section>
 
-      <section class="step" id="step4">
+      <section class="step" id="step4" hidden>
         <div class="step-no">Step 4</div>
         <div>
           <h2>최종 글쓰기</h2>
@@ -401,7 +422,7 @@
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <h2 id="modalTitle">제출할까요?</h2>
     <div class="summary" id="modalSummary"></div>
-    <p class="modal-note">제출하면 더 이상 고칠 수 없습니다.</p>
+    <p class="modal-note" id="modalNote">제출하면 더 이상 고칠 수 없습니다.</p>
     <div class="modal-actions">
       <button id="modalCancel" class="btn">더 쓰기</button>
       <button id="modalOk" class="btn primary">제출하기</button>
@@ -413,7 +434,7 @@
 <section id="done" class="done" hidden>
   <div class="sheet">
     <p class="kicker" id="doneKicker"></p>
-    <h1 class="done-title">제출되었습니다</h1>
+    <h1 class="done-title" id="doneTitle">제출되었습니다</h1>
     <div class="done-status" id="doneStatus"></div>
     <div class="done-grid" id="doneGrid"></div>
     <div class="done-text" id="doneText"></div>
@@ -421,7 +442,7 @@
       <button id="copyBtn" class="btn">최종본 복사</button>
       <button id="saveBtn" class="btn">파일로 저장</button>
     </div>
-    <p class="done-hint">이 화면을 선생님께 보여 주세요. 화면을 닫아도 같은 학번으로 다시 열면 이 화면이 나타납니다.</p>
+    <p class="done-hint" id="doneHint">이 화면을 선생님께 보여 주세요. 화면을 닫아도 같은 학번으로 다시 열면 이 화면이 나타납니다.</p>
     <div class="foot"><button id="teacherBtn2" class="link">교사</button></div>
   </div>
 </section>
@@ -459,15 +480,19 @@ const CONFIG = {
   title: "Good for All of Us: A Place for Everyone",
   subtitle: "1학년 2학기 영어 쓰기 수행평가",
 
-  minutes: 40,                 // 제한 시간(분). 주소 뒤에 ?min=30 을 붙이면 그 시간으로 열립니다.
-  autoSubmitWhenTimeUp: true,  // 시간이 끝나면 자동 제출
+  // 회차. 1 = 조사·브레인스토밍 → 초안 / 2 = 최종 글쓰기.
+  // 주소 뒤 ?session=2 가 가장 우선하고, 그다음 Apps Script 의 설정(openSession2 실행), 마지막이 이 값입니다.
+  session: 1,
+  // 단계별 제한 시간(분). 주소 뒤 ?r=20&d=25&f=15 로 바꿀 수 있습니다.
+  phases: { research: 20, draft: 25, final: 20 },
+  autoSubmitWhenTimeUp: true,  // 시간이 끝나면 자동으로 다음 단계/제출
   requiredSentences: 9,        // 최종본 필요 문장 수
   requiredExpressions: 5,      // Word Bank 필요 표현 수
   teacherPin: "0000",          // ★ 꼭 바꾸세요. 비워 두면("") 교사 메뉴가 꺼집니다.
 
   lock: {
     requireHomeScreen: false,   // true: "홈 화면에 추가"한 앱(주소창·탭 없음)으로 열었을 때만 시작. 주소 뒤 ?home=1 로도 켤 수 있음
-    requireFullscreen: true,    // Safari에서 열었을 때 전체 화면이어야 입력 가능. 해제하면 기록되고 입력이 잠김
+    requireFullscreen: false,   // 데스크톱 브라우저용. iPad Safari는 글자 칸을 누르면 전체 화면이 저절로 풀리므로 iPad에서는 항상 꺼집니다.
     blockHangulSelection: true  // 영어 칸에서 한글을 선택하면 선택을 풀고 기록 (iPad 번역 메뉴 차단용)
   },
 
@@ -621,14 +646,16 @@ const state = {
   sid: "", name: "", startedAt: 0, extraSec: 0,
   step1: [], step2: [], draft: [], final: "",
   leaves: [], hangul: 0, bursts: 0, hangulSel: 0, env: "", fsNote: "",
-  submitted: false, submittedAt: 0, submitReason: "", sent: null
+  submitted: false, submittedAt: 0, submitReason: "", sent: null,
+  phase: "research", phaseStartedAt: 0, phaseLog: {}, savedAt: 0,
+  draftSubmittedAt: 0, draftReason: "", draftSent: null, allowFullFlow: false
 };
-let minutes = CONFIG.minutes;
 let locked = false;
 let fsLost = false;
 let suppressLeaveUntil = 0;
 const ENV = {
-  standalone: navigator.standalone === true || !!(window.matchMedia && window.matchMedia("(display-mode: standalone)").matches)
+  standalone: navigator.standalone === true || !!(window.matchMedia && window.matchMedia("(display-mode: standalone)").matches),
+  ios: /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
 };
 const EVENT_LABEL = { hidden: "탭/앱 전환", blur: "포커스 이탈", fullscreen: "전체화면 해제", split: "화면 분할" };
 let saveTimer = null;
@@ -639,6 +666,7 @@ const hangulFlag = {};   // 필드별 "한글이 들어있는 상태"
 function storageKey() { return "cz1:" + state.sid; }
 function save() {
   try {
+    state.savedAt = Date.now();
     const copy = Object.assign({}, state);
     localStorage.setItem(storageKey(), JSON.stringify(copy));
     const n = $("autosaveNote"); if (n) n.textContent = "자동 저장됨 " + fmtClock(new Date());
@@ -672,9 +700,10 @@ function renderStatic() {
 
   $("rules").innerHTML = [
     "붙여넣기는 사용할 수 없습니다. 모든 문장은 직접 입력합니다.",
-    "다른 앱이나 탭으로 이동하면 횟수와 시각이 제출물에 기록됩니다.",
-    "글은 이 기기에 자동 저장됩니다. 실수로 닫혀도 같은 학번으로 다시 시작하면 이어집니다.",
-    "제한 시간은 " + minutes + "분입니다." + (CONFIG.autoSubmitWhenTimeUp ? " 시간이 끝나면 자동으로 제출됩니다." : "")
+    "초안과 최종본을 쓰는 동안 다른 앱이나 탭으로 이동하면 횟수와 시각이 제출물에 기록됩니다.",
+    "글은 자동 저장됩니다. 실수로 닫혀도 같은 학번과 이름으로 다시 시작하면 이어집니다.",
+    "1회차는 조사·브레인스토밍 → 초안, 2회차는 최종본입니다. 2회차에는 1회차 내용을 고칠 수 없습니다.",
+    "단계마다 제한 시간이 있고, 시간이 끝나면 자동으로 다음 단계로 넘어가거나 제출됩니다."
   ].map((r) => "<li>" + r + "</li>").join("");
 
   $("d1").textContent = CONFIG.desc1 || "";
@@ -717,19 +746,19 @@ function renderParts() {
   }).join("");
   document.querySelectorAll("[data-part]").forEach((ta) => {
     ta.value = state.draft[+ta.dataset.part][+ta.dataset.line] || "";
-    ta.readOnly = locked || fsLost; grow(ta);
+    ta.readOnly = !canEdit(3); grow(ta);
   });
 }
 
 function fillFields() {
-  const ro = locked || fsLost;
-  document.querySelectorAll("[data-step1]").forEach((el) => { el.value = state.step1[+el.dataset.step1] || ""; el.readOnly = ro; });
-  document.querySelectorAll("[data-step2]").forEach((el) => { el.value = state.step2[+el.dataset.step2] || ""; el.readOnly = ro; grow(el); });
+  document.querySelectorAll("[data-step1]").forEach((el) => { el.value = state.step1[+el.dataset.step1] || ""; el.readOnly = !canEdit(1); });
+  document.querySelectorAll("[data-step2]").forEach((el) => { el.value = state.step2[+el.dataset.step2] || ""; el.readOnly = !canEdit(2); grow(el); });
   renderParts();
-  const f = $("final"); f.value = state.final || ""; f.readOnly = ro; grow(f);
+  const f = $("final"); f.value = state.final || ""; f.readOnly = !canEdit(4); grow(f);
   $("who").textContent = state.sid + " " + state.name;
   $("sheet").classList.toggle("locked", locked);
-  document.querySelectorAll("[data-add], #importBtn").forEach((b) => { b.disabled = locked; });
+  document.querySelectorAll("[data-add]").forEach((b) => { b.disabled = !canEdit(3); });
+  $("importBtn").disabled = !canEdit(4);
 }
 
 function draftText() {
@@ -797,27 +826,71 @@ function refresh() {
     "<div>실행 환경 <b>" + (ENV.standalone ? "홈 화면 앱" : "브라우저") + "</b></div>";
 }
 
-// ---------- 입력 처리 ----------
-function isWritingField(el) {
-  return el && (el.matches("[data-part], #final") );
+// ---------- 단계(phase) ----------
+// research: 조사·브레인스토밍 (Step 1-2, 외부 접속 허용)
+// draft:    초안 쓰기 (Step 1-3 입력, 잠금)
+// draftDone: 1회차 제출 완료
+// final:    최종 글쓰기 (Step 4만 입력, 잠금)
+// done:     최종 제출 완료
+const ORDER = { research: 0, draft: 1, draftDone: 2, final: 3, done: 4 };
+const PHASE_LABEL = { research: "조사·브레인스토밍", draft: "초안 쓰기", draftDone: "1회차 완료", final: "최종 글쓰기", done: "제출 완료" };
+const urlQ = new URLSearchParams(location.search);
+let urlSession = +urlQ.get("session") || 0;
+let serverSession = 0;
+const urlMin = { research: +urlQ.get("r") || 0, draft: +urlQ.get("d") || 0, final: +urlQ.get("f") || 0 };
+
+function currentSession() { return urlSession || serverSession || CONFIG.session || 1; }
+function phaseAllows(step) {
+  const ph = state.phase;
+  if (ph === "research") return step === 1 || step === 2;
+  if (ph === "draft") return step <= 3;
+  if (ph === "final") return step === 4;
+  return false;
 }
+function canEdit(step) { return !locked && !fsLost && phaseAllows(step); }
+function lockActive() { return !$("app").hidden && !locked && (state.phase === "draft" || state.phase === "final"); }
+function phaseMinutes() {
+  const key = state.phase === "draft" ? "draft" : state.phase === "final" ? "final" : "research";
+  return urlMin[key] || (CONFIG.phases && CONFIG.phases[key]) || 20;
+}
+
+function applyPhase() {
+  const ph = state.phase;
+  $("step4").hidden = !(ph === "final" || ph === "done");
+  $("step3Start").hidden = ph !== "research";
+  $("step3Body").hidden = ph === "research";
+  $("step1").classList.toggle("ro", !phaseAllows(1));
+  $("step2").classList.toggle("ro", !phaseAllows(2));
+  $("step3").classList.toggle("ro", ORDER[ph] >= ORDER.draftDone);
+  document.querySelectorAll("#step1 .ro-tag, #step2 .ro-tag, #step3 .ro-tag").forEach((t) => { t.hidden = !(ph === "final" || ph === "done"); });
+
+  const label = ph === "research" ? "초안 쓰기 시작" : ph === "draft" ? "초안 제출" : "최종 제출";
+  $("submitBtn").textContent = label; $("submitTop").textContent = ph === "research" ? "초안 시작" : "제출";
+  $("phaseLabel").textContent = PHASE_LABEL[ph] || "";
+
+  const badge = $("stPhase");
+  badge.hidden = false;
+  if (ph === "research") { badge.textContent = "외부 접속 허용"; badge.className = "stat phase open"; }
+  else { badge.textContent = "잠금 중"; badge.className = "stat phase lock"; }
+  fillFields(); refresh();
+}
+
+// ---------- 입력 처리 ----------
+function isWritingField(el) { return el && el.matches("[data-part], #final"); }
 
 function onInput(e) {
   const el = e.target;
-  if (locked) return;
-  if (el.matches("[data-step1]")) state.step1[+el.dataset.step1] = el.value;
-  else if (el.matches("[data-step2]")) { state.step2[+el.dataset.step2] = el.value; grow(el); }
-  else if (el.matches("[data-part]")) { state.draft[+el.dataset.part][+el.dataset.line] = el.value; grow(el); }
-  else if (el.id === "final") { state.final = el.value; grow(el); }
+  if (el.matches("[data-step1]")) { if (!canEdit(1)) return; state.step1[+el.dataset.step1] = el.value; }
+  else if (el.matches("[data-step2]")) { if (!canEdit(2)) return; state.step2[+el.dataset.step2] = el.value; grow(el); }
+  else if (el.matches("[data-part]")) { if (!canEdit(3)) return; state.draft[+el.dataset.part][+el.dataset.line] = el.value; grow(el); }
+  else if (el.id === "final") { if (!canEdit(4)) return; state.final = el.value; grow(el); }
   else return;
 
   if (isWritingField(el)) {
-    // 한글 입력 감지 (없다가 생기는 순간을 1회로 셈)
     const key = el.id || (el.dataset.part + ":" + el.dataset.line);
     const has = HANGUL.test(el.value);
     if (has && !hangulFlag[key]) { state.hangul++; toast("영어로 작성하세요. 한글 입력이 기록됩니다.", 2600); }
     hangulFlag[key] = has;
-    // 한 번에 많은 글자가 들어오는 경우
     const prev = +(el.dataset.len || 0);
     if (el.value.length - prev > 25 && e.inputType !== "insertReplacementText") state.bursts++;
     el.dataset.len = el.value.length;
@@ -831,7 +904,7 @@ function blockPaste(e) {
 }
 
 function addLine(pi) {
-  if (locked) return;
+  if (!canEdit(3)) return;
   if (state.draft[pi].length >= 8) { toast("한 부분에는 8문장까지 쓸 수 있습니다."); return; }
   state.draft[pi].push("");
   renderParts(); refresh(); scheduleSave();
@@ -840,7 +913,7 @@ function addLine(pi) {
 }
 
 async function importDraft() {
-  if (locked) return;
+  if (!canEdit(4)) return;
   const text = draftText();
   if (!text) { toast("초안이 비어 있습니다."); return; }
   if (state.final.trim()) {
@@ -854,21 +927,32 @@ async function importDraft() {
   refresh(); scheduleSave(); f.focus();
 }
 
-// ---------- 이탈·잠금 감시 ----------
+// ---------- 이탈·잠금 감시 (잠금 단계에서만) ----------
 function noteEvent(kind) {
-  if ($("app").hidden || locked) return;
+  if (!lockActive()) return;
   const now = Date.now();
   if (now < suppressLeaveUntil) return;
   const fam = (k) => (k === "hidden" || k === "blur") ? "leave" : k;
   const last = state.leaves[state.leaves.length - 1];
   if (last && now - last.t < 1500 && fam(last.k) === fam(kind)) return;
-  state.leaves.push({ t: now, k: kind });
+  state.leaves.push({ t: now, k: kind, p: state.phase });
   refresh(); save();
 }
 document.addEventListener("visibilitychange", () => { if (document.hidden) noteEvent("hidden"); });
-window.addEventListener("blur", () => { noteEvent("blur"); });
 
-// 화면 분할(Split View): 방향은 그대로인데 폭만 줄어드는 경우
+// 창 포커스 이탈(blur)은 글자 칸을 누르거나 키보드가 붙었다 떨어질 때도 잠깐 생기므로,
+// 1.2초 뒤에도 페이지가 포커스를 잃은 상태이고 그 사이 글자 칸 포커스가 없었을 때만 기록합니다.
+let lastFocusIn = 0, blurTimer = null;
+document.addEventListener("focusin", () => { lastFocusIn = Date.now(); });
+window.addEventListener("focus", () => { clearTimeout(blurTimer); });
+window.addEventListener("blur", () => {
+  clearTimeout(blurTimer);
+  blurTimer = setTimeout(() => {
+    if (!document.hidden && Date.now() - lastFocusIn < 1500) return;
+    if (document.hidden || !document.hasFocus()) noteEvent("blur");
+  }, 1200);
+});
+
 let lastW = window.innerWidth, lastH = window.innerHeight;
 window.addEventListener("resize", () => {
   const w = window.innerWidth, h = window.innerHeight;
@@ -876,11 +960,11 @@ window.addEventListener("resize", () => {
   lastW = w; lastH = h;
 });
 
-// 전체 화면 강제 (Safari에서 열었을 때)
+// 전체 화면 강제 (Safari에서 열었을 때, 잠금 단계에서만)
+let fsUnavailable = false;
+let fsTries = 0;
 function fsElement() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
 function fsSupported() { const r = document.documentElement; return !!(r.requestFullscreen || r.webkitRequestFullscreen); }
-let fsUnavailable = false;   // 전체 화면을 열 수 없는 기기/브라우저(앱 내 미리보기 등)이면 강제하지 않음
-let fsTries = 0;
 function requestFs() {
   const r = document.documentElement;
   try {
@@ -894,31 +978,31 @@ function fsFallback(why) {
   setFsLost(false); $("fsSkipWrap").hidden = true;
   toast("전체 화면 없이 계속합니다. 제출물에 기록됩니다.", 3000);
 }
-function exitFs() {
-  const ex = document.exitFullscreen || document.webkitExitFullscreen;
-  try { if (ex && fsElement()) { const p = ex.call(document); if (p && p.catch) p.catch(() => {}); } } catch (e) {}
-}
-function needFs() { return !fsUnavailable && !!(CONFIG.lock && CONFIG.lock.requireFullscreen) && !ENV.standalone && fsSupported(); }
+function needFs() { return !fsUnavailable && !ENV.ios && !!(CONFIG.lock && CONFIG.lock.requireFullscreen) && !ENV.standalone && fsSupported() && lockActive(); }
 function setFsLost(v) {
   if (v && fsUnavailable) v = false;
   if (fsLost === v) return;
   fsLost = v;
   $("fsOverlay").hidden = !v;
-  const ro = locked || fsLost;
-  document.querySelectorAll("#sheet textarea, #sheet input").forEach((el) => { el.readOnly = ro; });
+  fillFields();
 }
 function onFsChange() {
-  if (!needFs() || $("app").hidden || locked || state.submitted) { setFsLost(false); return; }
+  if (!needFs() || state.submitted) { setFsLost(false); return; }
   if (fsElement()) { setFsLost(false); return; }
+  // 글자 칸을 눌러서 풀린 경우(iPad 등)는 이탈로 치지 않음
+  if (Date.now() - lastFocusIn < 1500) { setFsLost(false); return; }
   noteEvent("fullscreen");
   setFsLost(true);
 }
 document.addEventListener("fullscreenchange", onFsChange);
 document.addEventListener("webkitfullscreenchange", onFsChange);
+function ensureFsSoon() {
+  setTimeout(() => { if (needFs() && !fsElement()) { suppressLeaveUntil = Date.now() + 500; setFsLost(true); } }, 800);
+}
 
 // 영어 칸에서 한글을 선택하면 선택을 풀기 (선택 메뉴의 '번역'을 쓸 수 없게)
 document.addEventListener("selectionchange", () => {
-  if (!(CONFIG.lock && CONFIG.lock.blockHangulSelection) || $("app").hidden) return;
+  if (!(CONFIG.lock && CONFIG.lock.blockHangulSelection) || !lockActive()) return;
   const el = document.activeElement;
   if (!el || !isWritingField(el)) return;
   if (el.selectionStart === el.selectionEnd) return;
@@ -930,11 +1014,14 @@ document.addEventListener("selectionchange", () => {
   toast("한글은 선택할 수 없습니다. 영어로 작성하세요.");
 });
 
-// ---------- 타이머 ----------
+// ---------- 타이머 (단계별) ----------
 function remainingSec() {
-  return minutes * 60 + (state.extraSec || 0) - Math.floor((Date.now() - state.startedAt) / 1000);
+  return phaseMinutes() * 60 + (state.extraSec || 0) - Math.floor((Date.now() - state.phaseStartedAt) / 1000);
 }
 function tick() {
+  const wrap = $("timerWrap");
+  if (!(state.phase in { research: 1, draft: 1, final: 1 }) || !state.phaseStartedAt) { wrap.hidden = true; return; }
+  wrap.hidden = false;
   const r = remainingSec();
   const t = $("timer");
   const shown = Math.max(r, 0);
@@ -945,16 +1032,54 @@ function tick() {
 function startTick() { clearInterval(tickTimer); tick(); tickTimer = setInterval(tick, 500); }
 
 function timeUp() {
+  if (state.phase === "research") {
+    showBanner("조사 시간이 끝났습니다. 초안 쓰기 단계로 넘어갑니다.", false);
+    if (CONFIG.autoSubmitWhenTimeUp) startDraft(false, "시간 종료 자동 전환");
+    else setLocked(true);
+    return;
+  }
   setLocked(true);
-  showBanner("시간이 종료되었습니다. " + (CONFIG.autoSubmitWhenTimeUp ? "제출 중입니다." : "제출 버튼을 눌러 주세요."), true);
-  if (CONFIG.autoSubmitWhenTimeUp) submitNow("시간 종료 자동 제출");
+  if (state.phase === "draft") {
+    showBanner("초안 시간이 끝났습니다. " + (CONFIG.autoSubmitWhenTimeUp ? "초안을 제출합니다." : "초안 제출 버튼을 눌러 주세요."), true);
+    if (CONFIG.autoSubmitWhenTimeUp) submitDraft("시간 종료 자동 제출");
+  } else if (state.phase === "final") {
+    showBanner("시간이 종료되었습니다. " + (CONFIG.autoSubmitWhenTimeUp ? "제출 중입니다." : "제출 버튼을 눌러 주세요."), true);
+    if (CONFIG.autoSubmitWhenTimeUp) submitNow("시간 종료 자동 제출");
+  }
 }
 function setLocked(v) { locked = v; if (v) setFsLost(false); fillFields(); refresh(); }
 function showBanner(msg, danger) {
   const b = $("banner"); b.textContent = msg; b.hidden = false; b.className = "banner" + (danger ? " danger" : "");
 }
+function setPhase(ph) {
+  const prev = state.phase;
+  if (prev && state.phaseStartedAt) state.phaseLog[prev + "End"] = Date.now();
+  state.phase = ph; state.phaseStartedAt = Date.now(); state.extraSec = 0;
+  state.phaseLog[ph + "Start"] = Date.now();
+}
 
-// ---------- 제출 ----------
+// ---------- 단계 전환 ----------
+async function startDraft(byClick, reason) {
+  if (state.phase !== "research") return;
+  if (byClick) {
+    const r = await dialog({
+      title: "초안 쓰기 시작", text: "지금부터 다른 앱이나 탭으로 나가면 기록되고, 검색과 붙여넣기를 쓸 수 없습니다. 조사가 끝났으면 시작하세요.",
+      buttons: [{ label: "아직 아니요", value: null }, { label: "시작", value: "go", primary: true, onClick: () => { if (!ENV.ios && !ENV.standalone && fsSupported() && CONFIG.lock && CONFIG.lock.requireFullscreen) requestFs(); } }]
+    });
+    if (r.value !== "go") { if (fsElement()) exitFsQuiet(); return; }
+  }
+  locked = false; $("banner").hidden = true;
+  setPhase("draft"); state.phaseLog.draftHow = reason || "학생 시작"; save();
+  applyPhase(); startTick(); ensureFsSoon();
+  const y = $("step3").getBoundingClientRect().top + window.scrollY - 80;
+  window.scrollTo({ top: y, behavior: "smooth" });
+}
+function exitFsQuiet() {
+  const ex = document.exitFullscreen || document.webkitExitFullscreen;
+  try { if (ex && fsElement()) { const p = ex.call(document); if (p && p.catch) p.catch(() => {}); } } catch (e) {}
+}
+
+// ---------- 제출물 만들기 ----------
 function buildBrainstorm() {
   const s1 = CONFIG.step1Parts.map((p, i) => p + ": " + (state.step1[i] || "").trim()).join("\n");
   const s2 = CONFIG.step2Items.map((p, i) => step2Label(p) + " " + (state.step2[i] || "").trim()).join("\n");
@@ -966,68 +1091,145 @@ function buildDraft() {
     p.title + "\n" + state.draft[pi].map((s) => { n++; return "(" + n + ") " + s.trim(); }).join("\n")
   ).join("\n\n");
 }
-function buildMeta(reason) {
+function mins(a, b) { return a && b ? Math.round((b - a) / 60000) + "분" : "-"; }
+function buildMeta(reason, kind) {
   const a = analyze(state.final);
-  const mins = Math.round((Date.now() - state.startedAt) / 60000);
-  const leaves = state.leaves.map((l) => fmtClock(new Date(l.t)).slice(0, 5) + " " + (EVENT_LABEL[l.k] || l.k)).join(", ");
-  return [
-    "최종 문장 " + a.sentences.length,
-    "표현 " + a.used.length + "/" + BANK.length + (a.used.length ? " (" + a.used.map((i) => BANK[i].label).join(", ") + ")" : ""),
-    "초안 문장 " + draftSentenceCount(),
-    "화면이탈 " + state.leaves.length + "회" + (leaves ? " [" + leaves + "]" : ""),
-    "한글입력 " + state.hangul + "회",
-    "한글선택 " + state.hangulSel + "회",
-    "대량입력 " + state.bursts + "회",
-    "환경 " + (ENV.standalone ? "홈화면앱" : "브라우저") + (needFs() ? "(전체화면 강제)" : "") + (state.fsNote ? "(" + state.fsNote + ")" : ""),
-    "소요 " + mins + "분",
-    "제출 " + fmtClock(new Date(state.submittedAt)),
-    reason
-  ].join(" | ");
+  const dCount = draftSentenceCount();
+  const dUsed = usedExpressions(draftText()).length;
+  const L = state.phaseLog || {};
+  const leaves = state.leaves.map((l) => fmtClock(new Date(l.t)).slice(0, 5) + " " + (EVENT_LABEL[l.k] || l.k) + (l.p === "final" ? "(최종)" : "(초안)")).join(", ");
+  const parts = [];
+  if (kind === "final") parts.push("최종 문장 " + a.sentences.length, "표현 " + a.used.length + "/" + BANK.length + (a.used.length ? " (" + a.used.map((i) => BANK[i].label).join(", ") + ")" : ""));
+  parts.push("초안 문장 " + dCount + " (표현 " + dUsed + ")");
+  parts.push("화면이탈 " + state.leaves.length + "회" + (leaves ? " [" + leaves + "]" : ""));
+  parts.push("한글입력 " + state.hangul + "회", "한글선택 " + state.hangulSel + "회", "대량입력 " + state.bursts + "회");
+  parts.push("환경 " + (ENV.standalone ? "홈화면앱" : "브라우저") + (state.fsNote ? "(" + state.fsNote + ")" : ""));
+  parts.push("소요 조사 " + mins(L.researchStart, L.researchEnd) + " / 초안 " + mins(L.draftStart, L.draftEnd) + " / 최종 " + mins(L.finalStart, L.finalEnd));
+  if (state.draftSubmittedAt) parts.push("1회차 제출 " + fmtClock(new Date(state.draftSubmittedAt)).slice(0, 5) + " (" + (state.draftReason || "") + ")");
+  if (kind === "final") parts.push("최종 제출 " + fmtClock(new Date(state.submittedAt)).slice(0, 5) + " (" + reason + ")");
+  return parts.join(" | ");
 }
 
+// ---------- 확인 창 ----------
 function openModal() {
-  if (state.submitted) return;
-  const a = analyze(state.final);
+  const ph = state.phase;
+  if (ph === "research") { startDraft(true); return; }
+  if (ph !== "draft" && ph !== "final") return;
   const rows = [];
-  const okS = a.sentences.length >= CONFIG.requiredSentences, okE = a.used.length >= CONFIG.requiredExpressions;
-  rows.push('<div><span>최종본 문장 수</span><b class="' + (okS ? "good" : "bad") + '">' + a.sentences.length + " / " + CONFIG.requiredSentences + "</b></div>");
-  rows.push('<div><span>Word Bank 표현</span><b class="' + (okE ? "good" : "bad") + '">' + a.used.length + " / " + CONFIG.requiredExpressions + "</b></div>");
-  if (!state.final.trim()) rows.push('<div class="bad"><span>최종본이 비어 있습니다</span></div>');
-  if (a.hangul) rows.push('<div class="bad"><span>최종본에 한글이 들어 있습니다</span></div>');
-  const empty = state.draft.reduce((c, part) => c + part.filter((s) => !s.trim()).length, 0);
-  if (empty) rows.push('<div><span>비어 있는 초안 칸</span><b>' + empty + "</b></div>");
+  if (ph === "draft") {
+    const d = draftSentenceCount(), u = usedExpressions(draftText()).length;
+    const empty = state.draft.reduce((c, part) => c + part.filter((s) => !s.trim()).length, 0);
+    rows.push('<div><span>초안 문장 수</span><b class="' + (d >= CONFIG.requiredSentences ? "good" : "bad") + '">' + d + " / " + CONFIG.requiredSentences + "</b></div>");
+    rows.push('<div><span>Word Bank 표현</span><b class="' + (u >= CONFIG.requiredExpressions ? "good" : "bad") + '">' + u + " / " + CONFIG.requiredExpressions + "</b></div>");
+    if (empty) rows.push('<div><span>비어 있는 초안 칸</span><b>' + empty + "</b></div>");
+    $("modalTitle").textContent = "초안을 제출할까요?";
+    $("modalNote").textContent = "제출하면 1회차가 끝나고 초안을 더 고칠 수 없습니다. 2회차에는 최종본만 씁니다.";
+  } else {
+    const a = analyze(state.final);
+    rows.push('<div><span>최종본 문장 수</span><b class="' + (a.sentences.length >= CONFIG.requiredSentences ? "good" : "bad") + '">' + a.sentences.length + " / " + CONFIG.requiredSentences + "</b></div>");
+    rows.push('<div><span>Word Bank 표현</span><b class="' + (a.used.length >= CONFIG.requiredExpressions ? "good" : "bad") + '">' + a.used.length + " / " + CONFIG.requiredExpressions + "</b></div>");
+    if (!state.final.trim()) rows.push('<div class="bad"><span>최종본이 비어 있습니다</span></div>');
+    if (a.hangul) rows.push('<div class="bad"><span>최종본에 한글이 들어 있습니다</span></div>');
+    $("modalTitle").textContent = "제출할까요?";
+    $("modalNote").textContent = "제출하면 더 이상 고칠 수 없습니다.";
+  }
   $("modalSummary").innerHTML = rows.join("");
   suppressLeaveUntil = Date.now() + 1000;
   $("modal").hidden = false; $("modalOk").focus();
 }
 function closeModal() { $("modal").hidden = true; }
+function onModalOk() { if (state.phase === "draft") submitDraft("학생 제출"); else submitNow("학생 제출"); }
 
+// ---------- 서버 통신 (Apps Script) ----------
+function jsonp(params, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const url = CONFIG.submit.scriptUrl;
+    if (!url) { reject(new Error("no url")); return; }
+    const cb = "cb" + Date.now() + Math.floor(Math.random() * 1e6);
+    const s = document.createElement("script");
+    let done = false;
+    const cleanup = () => { try { delete window[cb]; } catch (e) { window[cb] = undefined; } s.remove(); };
+    window[cb] = (data) => { done = true; cleanup(); resolve(data); };
+    s.onerror = () => { if (!done) { done = true; cleanup(); reject(new Error("load")); } };
+    const q = new URLSearchParams(params); q.set("callback", cb); q.set("token", CONFIG.submit.token || "");
+    s.src = url + (url.includes("?") ? "&" : "?") + q.toString();
+    document.head.appendChild(s);
+    setTimeout(() => { if (!done) { done = true; cleanup(); reject(new Error("timeout")); } }, timeoutMs || 6000);
+  });
+}
+async function postToServer(kind, reason) {
+  const cfg = CONFIG.submit;
+  if (!cfg.scriptUrl) return null;
+  const body = new URLSearchParams();
+  body.append("token", cfg.token || ""); body.append("phase", kind);
+  body.append("sid", state.sid); body.append("name", state.name);
+  body.append("title", CONFIG.title); body.append("subtitle", CONFIG.subtitle);
+  body.append("brainstorm", buildBrainstorm()); body.append("draft", buildDraft());
+  body.append("final", state.final); body.append("meta", buildMeta(reason, kind));
+  body.append("data", JSON.stringify(state));
+  await fetch(cfg.scriptUrl, { method: "POST", mode: "no-cors", body, keepalive: true });
+  // 저장 확인 (읽어서 시각 비교)
+  try {
+    const r = await jsonp({ action: "check", sid: state.sid, name: state.name }, 8000);
+    const at = kind === "draft" ? r.draftAt : r.finalAt;
+    return !!(at && Date.now() - new Date(at).getTime() < 3 * 60 * 1000);
+  } catch (e) { return null; }
+}
+async function fetchRemoteDraft(sid, name) {
+  const r = await jsonp({ action: "draft", sid, name }, 7000);
+  if (!r || !r.found || !r.data) return null;
+  const obj = typeof r.data === "string" ? JSON.parse(r.data) : r.data;
+  if (!obj || String(obj.sid) !== String(sid)) return null;
+  return obj;
+}
+function pickState(local, remote) {
+  if (!local) return remote; if (!remote) return local;
+  const ol = ORDER[local.phase] || 0, orr = ORDER[remote.phase] || 0;
+  if (orr > ol) return remote; if (ol > orr) return local;
+  return (remote.savedAt || 0) > (local.savedAt || 0) ? remote : local;
+}
+
+// ---------- 1회차 제출 (초안) ----------
+async function submitDraft(reason) {
+  if (state.phase !== "draft") return;
+  closeModal();
+  state.draftSubmittedAt = Date.now(); state.draftReason = reason;
+  setPhase("draftDone"); state.phaseStartedAt = 0;
+  setLocked(true); save();
+  showDone("draft");
+  if (CONFIG.submit.scriptUrl) {
+    setDoneStatus("초안을 저장하는 중입니다…", false);
+    try {
+      const ok = await postToServer("draft", reason);
+      state.draftSent = ok; save();
+      if (ok === true) setDoneStatus("초안이 선생님 드라이브에 저장되었습니다. 2회차에 같은 학번·이름으로 열면 이어집니다.", false);
+      else if (ok === false) setDoneStatus("이 기기에는 저장되었지만 선생님 드라이브 저장은 확인되지 않았습니다. 2회차는 이 아이패드로 진행하세요.", true);
+      else setDoneStatus("이 기기에 저장되었습니다. (서버 확인 불가) 2회차는 이 아이패드로 진행하세요.", false);
+    } catch (e) {
+      state.draftSent = false; save();
+      setDoneStatus("이 기기에는 저장되었지만 전송에 실패했습니다. 2회차는 이 아이패드로 진행하고, 선생님께 알려 주세요.", true);
+    }
+  } else {
+    setDoneStatus("이 기기에 저장되었습니다. 2회차는 이 아이패드에서 같은 학번·이름으로 시작하세요.", false);
+  }
+}
+
+// ---------- 2회차 제출 (최종) ----------
 async function submitNow(reason) {
-  if (state.submitted) return;
+  if (state.submitted || state.phase !== "final") return;
   closeModal();
   state.submitted = true; state.submittedAt = Date.now(); state.submitReason = reason;
+  setPhase("done"); state.phaseStartedAt = 0;
   setLocked(true); setFsLost(false); save();
-  showDone();
-  const cfg = CONFIG.submit;
-  if (cfg.scriptUrl || (cfg.formAction && cfg.entries.final)) {
+  showDone("final");
+  if (CONFIG.submit.scriptUrl) {
     setDoneStatus("전송 중입니다…", false);
     try {
-      const body = new URLSearchParams();
-      if (cfg.scriptUrl) {
-        body.append("token", cfg.token || "");
-        body.append("sid", state.sid); body.append("name", state.name);
-        body.append("title", CONFIG.title); body.append("subtitle", CONFIG.subtitle);
-        body.append("brainstorm", buildBrainstorm()); body.append("draft", buildDraft());
-        body.append("final", state.final); body.append("meta", buildMeta(reason));
-      } else {
-        const put = (k, v) => { if (cfg.entries[k]) body.append(cfg.entries[k], v); };
-        put("sid", state.sid); put("name", state.name);
-        put("brainstorm", buildBrainstorm()); put("draft", buildDraft());
-        put("final", state.final); put("meta", buildMeta(reason));
-      }
-      await fetch(cfg.scriptUrl || cfg.formAction, { method: "POST", mode: "no-cors", body, keepalive: true });
-      state.sent = true; save();
-      setDoneStatus("선생님께 전송했습니다. (" + fmtClock(new Date()) + ")", false);
+      const ok = await postToServer("final", reason);
+      state.sent = ok; save();
+      if (ok === true) setDoneStatus("선생님께 전송했습니다. (" + fmtClock(new Date()) + ")", false);
+      else if (ok === false) setDoneStatus("전송이 확인되지 않았습니다. 아래 '최종본 복사' 또는 '파일로 저장'을 사용하고 선생님께 알려 주세요.", true);
+      else setDoneStatus("전송했습니다. (확인 불가) 선생님께 화면을 보여 주세요.", false);
     } catch (e) {
       state.sent = false; save();
       setDoneStatus("전송하지 못했습니다. 아래 '최종본 복사' 또는 '파일로 저장'을 사용하고 선생님께 알려 주세요.", true);
@@ -1038,34 +1240,41 @@ async function submitNow(reason) {
 }
 function setDoneStatus(msg, bad) { const s = $("doneStatus"); s.textContent = msg; s.className = "done-status" + (bad ? " bad" : ""); }
 
-function showDone() {
-  $("app").hidden = true; $("gate").hidden = true; $("done").hidden = false;
-  const a = analyze(state.final);
-  $("doneGrid").innerHTML = [
-    ["학번", state.sid], ["이름", state.name],
-    ["제출 시각", fmtClock(new Date(state.submittedAt)).slice(0, 5)],
-    ["문장 수", a.sentences.length], ["표현", a.used.length + "/" + BANK.length],
+function showDone(kind) {
+  $("app").hidden = true; $("gate").hidden = true; $("done").hidden = false; $("noDraft").hidden = true;
+  const isDraft = kind === "draft";
+  $("doneTitle").textContent = isDraft ? "1회차 제출 완료" : "제출되었습니다";
+  $("doneHint").textContent = isDraft
+    ? "이 화면을 선생님께 보여 주세요. 2회차에 같은 주소를 열고 같은 학번·이름을 입력하면 초안이 그대로 나타납니다."
+    : "이 화면을 선생님께 보여 주세요. 화면을 닫아도 같은 학번으로 다시 열면 이 화면이 나타납니다.";
+  $("copyBtn").textContent = isDraft ? "초안 복사" : "최종본 복사";
+  const text = isDraft ? draftText() : state.final;
+  const a = analyze(text);
+  const rows = [["학번", state.sid], ["이름", state.name],
+    [isDraft ? "1회차 제출" : "제출 시각", fmtClock(new Date(isDraft ? state.draftSubmittedAt : state.submittedAt)).slice(0, 5)],
+    [isDraft ? "초안 문장" : "문장 수", a.sentences.length], ["표현", a.used.length + "/" + BANK.length],
     ["화면 이탈", state.leaves.length + "회", state.leaves.length > 0],
     ["한글 입력", state.hangul + "회", state.hangul > 0],
-    ["한글 선택", state.hangulSel + "회", state.hangulSel > 0]
-  ].map((r) => '<div class="' + (r[2] ? "bad" : "") + '">' + r[0] + "<b>" + escapeHtml(String(r[1])) + "</b></div>").join("");
-  $("doneText").innerHTML = state.final.trim() ? highlight(state.final) : '<span style="color:var(--muted)">(최종본이 비어 있습니다)</span>';
-  if (state.sent === true) setDoneStatus("선생님께 전송했습니다.", false);
-  else if (state.sent === false) setDoneStatus("전송하지 못했습니다. 아래 '최종본 복사' 또는 '파일로 저장'을 사용하고 선생님께 알려 주세요.", true);
-  else setDoneStatus("제출이 저장되었습니다.", false);
+    ["한글 선택", state.hangulSel + "회", state.hangulSel > 0]];
+  $("doneGrid").innerHTML = rows.map((r) => '<div class="' + (r[2] ? "bad" : "") + '">' + r[0] + "<b>" + escapeHtml(String(r[1])) + "</b></div>").join("");
+  $("doneText").innerHTML = text.trim() ? highlight(text) : '<span style="color:var(--muted)">(비어 있습니다)</span>';
+  const sent = isDraft ? state.draftSent : state.sent;
+  if (sent === true) setDoneStatus(isDraft ? "초안이 선생님 드라이브에 저장되었습니다." : "선생님께 전송했습니다.", false);
+  else if (sent === false) setDoneStatus(isDraft ? "이 기기에는 저장되었지만 드라이브 저장은 확인되지 않았습니다. 2회차는 이 아이패드로 진행하세요." : "전송이 확인되지 않았습니다. 아래 버튼으로 복사·저장하고 선생님께 알려 주세요.", true);
+  else setDoneStatus(isDraft ? "이 기기에 저장되었습니다." : "제출이 저장되었습니다.", false);
   window.scrollTo(0, 0);
 }
 
 function fullText() {
   return CONFIG.subtitle + " - " + CONFIG.title + "\n학번: " + state.sid + "  이름: " + state.name + "\n\n" +
-    buildBrainstorm() + "\n\n[Step 3 초안]\n" + buildDraft() + "\n\n[Step 4 최종본]\n" + state.final + "\n\n[자동 집계]\n" + buildMeta(state.submitReason);
+    buildBrainstorm() + "\n\n[Step 3 초안]\n" + buildDraft() + "\n\n[Step 4 최종본]\n" + state.final + "\n\n[자동 집계]\n" + buildMeta(state.submitReason || "", state.submitted ? "final" : "draft");
 }
 async function copyFinal() {
-  const text = state.final;
-  try { await navigator.clipboard.writeText(text); toast("최종본을 복사했습니다."); }
+  const text = state.phase === "draftDone" ? draftText() : state.final;
+  try { await navigator.clipboard.writeText(text); toast("복사했습니다."); }
   catch (e) {
     const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select();
-    try { document.execCommand("copy"); toast("최종본을 복사했습니다."); } catch (e2) { toast("복사할 수 없습니다. 파일로 저장을 사용하세요."); }
+    try { document.execCommand("copy"); toast("복사했습니다."); } catch (e2) { toast("복사할 수 없습니다. 파일로 저장을 사용하세요."); }
     ta.remove();
   }
 }
@@ -1077,7 +1286,7 @@ function saveFile() {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 
-// ---------- 공용 대화상자 (prompt/confirm 대신: 전체 화면·홈 화면 앱에서도 안전) ----------
+// ---------- 공용 대화상자 ----------
 function dialog(o) {
   return new Promise((resolve) => {
     const box = $("dlg"), inp = $("dlgInput"), acts = $("dlgActions");
@@ -1090,10 +1299,9 @@ function dialog(o) {
     o.buttons.forEach((b) => {
       const btn = document.createElement("button");
       btn.className = "btn" + (b.primary ? " primary" : ""); btn.textContent = b.label;
-      btn.addEventListener("click", () => finish(b.value)); acts.appendChild(btn);
+      btn.addEventListener("click", () => { if (b.onClick) { try { b.onClick(); } catch (e) {} } finish(b.value); }); acts.appendChild(btn);
     });
     inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); const prim = o.buttons.find((b) => b.primary); finish(prim ? prim.value : null); } };
-    // 앞선 대화상자의 키 입력이 새 버튼에 전달되지 않도록 한 박자 뒤에 연다
     setTimeout(() => {
       box.hidden = false;
       if (o.input) inp.focus(); else { const prim = acts.querySelector(".primary") || acts.lastChild; if (prim) prim.focus(); }
@@ -1110,20 +1318,50 @@ async function teacherMenu() {
       buttons: [{ label: "취소", value: null }, { label: "확인", value: "ok", primary: true }] });
     if (r.value !== "ok") return;
     if (r.input !== CONFIG.teacherPin) { toast("PIN이 맞지 않습니다."); return; }
+    const onGate = !$("gate").hidden;
     const who = state.sid ? state.sid + " " + state.name : "(시작 전)";
-    const c = await dialog({ title: "교사 메뉴", text: who + " · 남은 시간 " + (state.startedAt ? Math.max(0, Math.ceil(remainingSec() / 60)) + "분" : "-"),
-      buttons: [{ label: "5분 추가", value: "1" }, { label: "잠금 해제 + 5분", value: "2" }, { label: "데이터 삭제", value: "3" }, { label: "닫기", value: null }] });
-    if (!state.startedAt) return;
-    if (c.value === "1") { state.extraSec = (state.extraSec || 0) + 300; save(); tick(); toast("5분을 추가했습니다."); }
-    else if (c.value === "2") {
-      state.submitted = false; state.sent = null; state.submitReason = "";
-      if (remainingSec() <= 0) state.extraSec = (state.extraSec || 0) + (-remainingSec()) + 300;
-      save();
-      $("done").hidden = true; $("app").hidden = false; $("banner").hidden = true;
-      setLocked(false); startTick(); toast("잠금을 해제했습니다."); setTimeout(onFsChange, 300);
+    const info = who + " · " + (PHASE_LABEL[state.phase] || "") + (state.phaseStartedAt ? " · 남은 " + Math.max(0, Math.ceil(remainingSec() / 60)) + "분" : "") + " · " + currentSession() + "회차";
+    const buttons = [];
+    if (!onGate) {
+      buttons.push({ label: "5분 추가", value: "add" });
+      if (state.phase === "research") buttons.push({ label: "초안 단계로 넘기기", value: "todraft" });
+      if (locked && (state.phase === "draft" || state.phase === "final")) buttons.push({ label: "잠금 해제 + 5분", value: "unlock" });
     }
-    else if (c.value === "3") {
-      const ok = await dialog({ title: "데이터 삭제", text: who + " 학생의 저장 데이터를 지우고 처음부터 다시 시작합니다.",
+    if (state.phase === "draftDone" || state.phase === "done") buttons.push({ label: "제출 취소 (다시 열기)", value: "reopen" });
+    if (onGate && state.sid) {
+      buttons.push({ label: "초안 없이 최종만 진행", value: "finalOnly" });
+      buttons.push({ label: "1회차부터 전체 진행", value: "fullFlow" });
+    }
+    if (state.sid) buttons.push({ label: "데이터 삭제", value: "wipe" });
+    buttons.push({ label: "닫기", value: null });
+    const c = await dialog({ title: "교사 메뉴", text: info, buttons });
+    if (!c.value) return;
+
+    if (c.value === "add") { state.extraSec = (state.extraSec || 0) + 300; save(); tick(); toast("5분을 추가했습니다."); }
+    else if (c.value === "todraft") { startDraft(false, "교사 전환"); toast("초안 단계로 넘겼습니다."); }
+    else if (c.value === "unlock") {
+      if (remainingSec() <= 0) state.extraSec = (state.extraSec || 0) + (-remainingSec()) + 300;
+      $("banner").hidden = true; setLocked(false); save(); startTick(); toast("잠금을 해제했습니다."); setTimeout(onFsChange, 300);
+    }
+    else if (c.value === "reopen") {
+      if (state.phase === "done") { state.submitted = false; state.sent = null; state.submitReason = ""; setPhase("final"); state.extraSec = 300; }
+      else { state.draftSent = null; state.draftSubmittedAt = 0; setPhase("draft"); state.extraSec = 300; }
+      save(); $("done").hidden = true; $("banner").hidden = true;
+      enterApp(); toast("다시 열었습니다. 5분이 주어집니다.");
+    }
+    else if (c.value === "finalOnly") {
+      if (!state.startedAt) newState(state.sid, state.name);
+      state.phaseLog = state.phaseLog || {}; state.draftReason = "초안 없음(교사 허용)";
+      setPhase("draftDone"); state.phaseStartedAt = 0; save();
+      $("noDraft").hidden = true; beginFinal();
+    }
+    else if (c.value === "fullFlow") {
+      if (!state.startedAt) newState(state.sid, state.name);
+      state.allowFullFlow = true; setPhase("research"); save();
+      $("noDraft").hidden = true; enterApp();
+    }
+    else if (c.value === "wipe") {
+      const ok = await dialog({ title: "데이터 삭제", text: who + " 학생의 이 기기 저장 데이터를 지우고 처음부터 다시 시작합니다. (선생님 드라이브의 초안은 지워지지 않습니다.)",
         buttons: [{ label: "취소", value: null }, { label: "삭제", value: "yes", primary: true }] });
       if (ok.value === "yes") { localStorage.removeItem(storageKey()); location.reload(); }
     }
@@ -1138,10 +1376,11 @@ function newState(sid, name) {
   state.draft = CONFIG.step3Parts.map((p) => Array.from({ length: p.min }, () => ""));
   state.final = ""; state.leaves = []; state.hangul = 0; state.bursts = 0; state.hangulSel = 0;
   state.submitted = false; state.submittedAt = 0; state.submitReason = ""; state.sent = null;
+  state.phase = "research"; state.phaseStartedAt = 0; state.phaseLog = {}; state.savedAt = 0;
+  state.draftSubmittedAt = 0; state.draftReason = ""; state.draftSent = null; state.allowFullFlow = false; state.fsNote = "";
 }
 function restoreState(saved) {
   Object.assign(state, saved);
-  // 설정이 바뀐 경우를 대비해 길이 맞추기
   state.step1 = CONFIG.step1Parts.map((p, i) => (state.step1 || [])[i] || "");
   state.step2 = CONFIG.step2Items.map((p, i) => (state.step2 || [])[i] || "");
   state.draft = CONFIG.step3Parts.map((p, pi) => {
@@ -1149,53 +1388,89 @@ function restoreState(saved) {
     while (arr.length < p.min) arr.push("");
     return arr;
   });
-  state.leaves = state.leaves || [];
-  state.hangulSel = state.hangulSel || 0;
+  state.leaves = state.leaves || []; state.hangulSel = state.hangulSel || 0;
+  state.phase = state.phase || (state.submitted ? "done" : "research");
+  state.phaseLog = state.phaseLog || {};
 }
 
-function start() {
-  const sid = $("sid").value.trim(), name = $("name").value.trim();
-  const note = $("gateNote");
-  if (!/^\d{3,}$/.test(sid)) { note.textContent = "학번을 숫자로 입력하세요."; note.className = "gate-note error"; $("sid").focus(); return; }
-  if (!name) { note.textContent = "이름을 입력하세요."; note.className = "gate-note error"; $("name").focus(); return; }
-  const saved = load(sid);
-  if (saved && saved.startedAt) { restoreState(saved); if (name && name !== state.name) state.name = name; }
-  else newState(sid, name);
-  state.env = ENV.standalone ? "home" : "browser";
-
-  if (state.submitted) { showDone(); return; }
-  $("gate").hidden = true; $("app").hidden = false;
+function enterApp() {
+  $("gate").hidden = true; $("done").hidden = true; $("app").hidden = false;
   locked = false;
-  if (needFs() && !fsElement()) requestFs();   // 시작 버튼 클릭이 사용자 동작이므로 여기서 요청
-  fillFields();
   document.querySelectorAll("[data-part], #final").forEach((el) => {
     el.dataset.len = el.value.length;
     hangulFlag[el.id || (el.dataset.part + ":" + el.dataset.line)] = HANGUL.test(el.value);
   });
-  refresh(); save(); startTick();
-  if (saved && saved.startedAt) toast("이어서 작성합니다. 남은 시간은 그대로입니다.", 3000);
+  applyPhase(); save(); startTick(); ensureFsSoon();
   window.scrollTo(0, 0);
-  if (needFs()) setTimeout(() => { if (needFs() && !fsElement()) { suppressLeaveUntil = Date.now() + 500; setFsLost(true); } }, 800);
+}
+function beginFinal() {
+  if (state.phase !== "final") { setPhase("final"); save(); }
+  enterApp();
+  const y = $("step4").getBoundingClientRect().top + window.scrollY - 80;
+  setTimeout(() => window.scrollTo({ top: y, behavior: "smooth" }), 200);
+}
+
+async function start() {
+  const sid = $("sid").value.trim(), name = $("name").value.trim();
+  const note = $("gateNote");
+  if (!/^\d{3,}$/.test(sid)) { note.textContent = "학번을 숫자로 입력하세요."; note.className = "gate-note error"; $("sid").focus(); return; }
+  if (!name) { note.textContent = "이름을 입력하세요."; note.className = "gate-note error"; $("name").focus(); return; }
+  const sess = currentSession();
+  // 2회차(최종)는 잠금 단계라 시작 버튼 클릭 시점에 전체 화면을 요청해 둔다 (사용자 동작이 필요)
+  if (sess === 2 && !ENV.ios && !ENV.standalone && fsSupported() && CONFIG.lock && CONFIG.lock.requireFullscreen) requestFs();
+
+  $("startBtn").disabled = true; note.textContent = "저장된 내용을 확인하는 중…"; note.className = "gate-note";
+  const local = load(sid);
+  let remote = null;
+  if (CONFIG.submit.scriptUrl && !(local && ORDER[local.phase] >= ORDER.final)) {
+    try { remote = await fetchRemoteDraft(sid, name); } catch (e) { remote = null; }
+  }
+  $("startBtn").disabled = false; note.textContent = "";
+  const chosen = pickState(local, remote);
+  if (chosen) { restoreState(chosen); if (name && name !== state.name) state.name = name; }
+  else newState(sid, name);
+  state.env = ENV.standalone ? "home" : "browser";
+
+  if (state.submitted || state.phase === "done") { showDone("final"); return; }
+
+  if (sess === 2) {
+    if (state.phase === "final") { enterApp(); return; }
+    if (state.phase === "draftDone") { beginFinal(); return; }
+    if (state.allowFullFlow) { if (!state.phaseStartedAt) setPhase("research"); enterApp(); return; }
+    save(); $("noDraft").hidden = false; if (fsElement()) exitFsQuiet();
+    return;
+  }
+  // 1회차
+  if (state.phase === "draftDone") { showDone("draft"); return; }
+  if (state.phase === "final") { enterApp(); return; }   // 교사가 최종으로 넘긴 경우
+  if (!state.phaseStartedAt) setPhase("research");
+  enterApp();
+  if (chosen) toast("이어서 작성합니다. 남은 시간은 그대로입니다.", 3000);
+}
+
+function updateSessionBox() {
+  const sess = currentSession();
+  $("sessionBox").innerHTML = sess === 2
+    ? "<b>2회차</b> 최종 글쓰기 — 1회차 때와 같은 학번·이름을 입력하면 초안이 나타납니다. 1회차 내용은 고칠 수 없습니다."
+    : "<b>1회차</b> 조사·브레인스토밍 → 초안 — 조사 중에는 다른 앱을 써도 되고, 초안 쓰기를 시작하면 잠깁니다.";
 }
 
 function init() {
-  const q = new URLSearchParams(location.search);
-  if (q.get("min") && +q.get("min") > 0) minutes = +q.get("min");
-  if (q.get("home") === "1") CONFIG.lock.requireHomeScreen = true;
+  if (urlQ.get("home") === "1") CONFIG.lock.requireHomeScreen = true;
   renderStatic();
+  updateSessionBox();
 
-  // 실행 환경 표시 / 홈 화면 앱 요구
   const envBadge = $("stEnv");
   envBadge.hidden = false;
-  envBadge.textContent = ENV.standalone ? "홈 화면 앱" : (needFs() ? "전체 화면 모드" : "브라우저");
+  envBadge.textContent = ENV.standalone ? "홈 화면 앱" : "브라우저";
   if (CONFIG.lock.requireHomeScreen && !ENV.standalone) {
     $("homeGuide").hidden = false; $("gateForm").hidden = true; $("startBtn").hidden = true; $("gateNote").hidden = true;
   }
-  $("fsResume").addEventListener("click", () => {
-    requestFs();
-    setTimeout(() => { onFsChange(); if (!fsElement() && needFs()) { fsTries++; if (fsTries >= 1) $("fsSkipWrap").hidden = false; } }, 700);
-  });
-  $("fsSkip").addEventListener("click", () => fsFallback("전체 화면 사용 불가 (학생이 없이 계속 선택)"));
+
+  // 서버에 회차 설정이 있으면 반영 (주소의 ?session= 이 있으면 그것이 우선)
+  if (CONFIG.submit.scriptUrl && !urlSession) {
+    jsonp({ action: "session" }, 5000).then((r) => { if (r && +r.session) { serverSession = +r.session; updateSessionBox(); } }).catch(() => {});
+  }
 
   document.addEventListener("input", onInput);
   document.addEventListener("paste", blockPaste, true);
@@ -1206,13 +1481,12 @@ function init() {
   document.addEventListener("click", (e) => {
     const add = e.target.closest("[data-add]"); if (add) addLine(+add.dataset.add);
   });
-  // 초안 칸에서 Enter = 다음 문장 칸으로
   document.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && e.target.matches("[data-part]")) {
       e.preventDefault();
       const pi = +e.target.dataset.part, li = +e.target.dataset.line;
       const next = document.querySelector('[data-part="' + pi + '"][data-line="' + (li + 1) + '"]') ||
-        document.querySelector('[data-part="' + (pi + 1) + '"][data-line="0"]') || $("final");
+        document.querySelector('[data-part="' + (pi + 1) + '"][data-line="0"]');
       if (next) next.focus();
     }
   });
@@ -1221,28 +1495,35 @@ function init() {
   $("name").addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
   $("sid").addEventListener("input", () => {
     const saved = load($("sid").value.trim()); const note = $("gateNote");
-    if (saved && saved.startedAt) { note.textContent = saved.submitted ? "이미 제출한 학번입니다. 시작하면 제출 화면이 열립니다." : "저장된 글이 있습니다. 시작하면 이어서 작성합니다."; note.className = "gate-note"; }
-    else { note.textContent = ""; note.className = "gate-note"; }
+    $("noDraft").hidden = true;
+    if (saved && saved.startedAt) {
+      note.textContent = saved.submitted ? "이미 최종 제출한 학번입니다." : saved.phase === "draftDone" ? "1회차 초안이 이 기기에 있습니다." : "저장된 내용이 있습니다. 시작하면 이어서 작성합니다.";
+      note.className = "gate-note";
+    } else { note.textContent = ""; note.className = "gate-note"; }
   });
+  $("retryBtn").addEventListener("click", start);
+  $("startDraftBtn").addEventListener("click", () => startDraft(true));
   $("importBtn").addEventListener("click", importDraft);
   $("submitBtn").addEventListener("click", openModal);
   $("submitTop").addEventListener("click", openModal);
   $("modalCancel").addEventListener("click", closeModal);
-  $("modalOk").addEventListener("click", () => submitNow("학생 제출"));
+  $("modalOk").addEventListener("click", onModalOk);
   $("copyBtn").addEventListener("click", copyFinal);
   $("saveBtn").addEventListener("click", saveFile);
-  $("teacherBtn").addEventListener("click", teacherMenu);
-  $("teacherBtn2").addEventListener("click", teacherMenu);
-  $("teacherBtn3").addEventListener("click", teacherMenu);
+  ["teacherBtn", "teacherBtn2", "teacherBtn3", "teacherBtn4"].forEach((id) => { const b = $(id); if (b) b.addEventListener("click", teacherMenu); });
+  $("fsResume").addEventListener("click", () => {
+    requestFs();
+    setTimeout(() => { onFsChange(); if (!fsElement() && needFs()) { fsTries++; if (fsTries >= 1) $("fsSkipWrap").hidden = false; } }, 700);
+  });
+  $("fsSkip").addEventListener("click", () => fsFallback("전체 화면 사용 불가 (학생이 없이 계속 선택)"));
 
   const root = document.documentElement;
   const req = root.requestFullscreen || root.webkitRequestFullscreen;
-  if (req && !needFs()) {
+  if (req && !ENV.ios && !(CONFIG.lock && CONFIG.lock.requireFullscreen)) {
     $("fsBtn").hidden = false;
     $("fsBtn").addEventListener("click", () => {
       const exit = document.exitFullscreen || document.webkitExitFullscreen;
-      if (document.fullscreenElement || document.webkitFullscreenElement) exit.call(document);
-      else req.call(root);
+      if (fsElement()) exit.call(document); else req.call(root);
     });
   }
   window.addEventListener("resize", () => document.querySelectorAll("textarea").forEach(grow));
