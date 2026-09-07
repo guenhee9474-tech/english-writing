@@ -7,6 +7,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="영어 쓰기">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <title>영어 쓰기 수행평가 - Stepping Out of My Comfort Zone</title>
 <!--
   ══════════════════════════════════════════════════════════════════
@@ -31,11 +32,13 @@
       1회차 초안은 선생님 시트에 저장되고, 2회차 최종본은 PDF로 드라이브 폴더에 올라갑니다.
       연동을 안 하면 제출 화면에서 "복사" / "파일로 저장" 버튼으로 받습니다.
    5) 교사 PIN(기본 0000)은 꼭 바꾸세요. 화면 아래 "교사" 버튼 > PIN 입력 > 시간 추가 / 잠금 해제 / 단계 넘기기 / 데이터 삭제
-   6) 활동은 두 번에 나눠 합니다.
+   6) 활동은 두 번에 나눠 합니다. 학번+이름이 학생의 ID입니다.
       1회차: 조사·브레인스토밍(Step 1-2, 외부 접속 허용) → "초안 쓰기 시작" 버튼 → 초안(Step 3, 잠금) → 초안 제출
-      2회차: 같은 주소에서 같은 학번·이름으로 열면 초안이 나타나고(수정 불가), 최종본(Step 4, 잠금)만 씁니다.
-      회차는 세 가지 방법으로 정합니다. 우선순위: 주소 ?session=2  >  Apps Script의 openSession2() 실행  >  CONFIG.session
-      초안은 제출 시 Apps Script에도 저장되므로 다른 아이패드에서 열어도 이어집니다.
+      2회차: 같은 주소에서 같은 학번·이름으로 로그인하면 서버에 저장된 초안이 그대로 열리고(수정 불가), 최종본(Step 4, 잠금)만 씁니다.
+      어느 단계를 열지는 서버(Apps Script)에 저장된 학생 상태로 자동 결정됩니다. 회차 설정은 따로 없습니다.
+      작성 중인 내용도 1분마다 서버에 자동 저장되므로 다른 아이패드에서 로그인해도 이어집니다.
+      초안을 일찍 낸 학생이 같은 시간에 최종까지 써 버리는 걸 막으려면 Apps Script에서 closeFinal() 을 실행해 두고,
+      2회차 수업 때 openFinal() 을 실행하세요. (기본은 열림)
   ══════════════════════════════════════════════════════════════════
 -->
 <style>
@@ -280,13 +283,8 @@
   <div class="gate-card">
     <p class="kicker" id="gateKicker"></p>
     <h1 class="gate-title" id="gateTitle"></h1>
-    <div class="session-box" id="sessionBox"></div>
+    <div class="session-box" id="gateInfo">학번과 이름으로 로그인하면 지난 작업이 그대로 열립니다. 초안을 아직 제출하지 않았으면 1회차(조사 → 초안), 제출했으면 2회차(최종 글쓰기)가 열립니다.</div>
     <ul class="rules" id="rules"></ul>
-    <div id="noDraft" class="home-guide" hidden>
-      <b>1회차 초안을 찾을 수 없습니다.</b>
-      <p style="margin:0 0 10px">학번과 이름이 1회차 때와 같은지 확인하세요. 같은데도 안 나오면 선생님께 알려 주세요.</p>
-      <div style="display:flex;gap:8px;flex-wrap:wrap"><button id="retryBtn" class="btn small">다시 확인</button><button id="teacherBtn4" class="btn small">교사</button></div>
-    </div>
     <div id="homeGuide" class="home-guide" hidden>
       <b>홈 화면 앱으로 열어야 시작할 수 있습니다.</b>
       <ol>
@@ -301,6 +299,7 @@
     </div>
     <p id="gateNote" class="gate-note"></p>
     <button id="startBtn" class="btn primary">시작하기</button>
+    <div class="foot" style="padding:14px 0 0"><button id="teacherBtn4" class="link">교사</button><div id="verTag" style="font-size:11px;color:var(--muted);margin-top:4px"></div></div>
   </div>
 </section>
 
@@ -477,14 +476,13 @@
    교사용 설정 (여기만 고치면 됩니다)
    ════════════════════════════════════════════════════════════════ */
 const CONFIG = {
+  version: "2026-09-08 (ID 로그인판)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
   title: "Good for All of Us: A Place for Everyone",
   subtitle: "1학년 2학기 영어 쓰기 수행평가",
 
-  // 회차. 1 = 조사·브레인스토밍 → 초안 / 2 = 최종 글쓰기.
-  // 주소 뒤 ?session=2 가 가장 우선하고, 그다음 Apps Script 의 설정(openSession2 실행), 마지막이 이 값입니다.
-  session: 1,
   // 단계별 제한 시간(분). 주소 뒤 ?r=20&d=25&f=15 로 바꿀 수 있습니다.
   phases: { research: 20, draft: 25, final: 20 },
+  autosaveSec: 60,             // 작성 중 서버 자동 저장 간격(초). 0이면 제출 때만 서버에 보냅니다.
   autoSubmitWhenTimeUp: true,  // 시간이 끝나면 자동으로 다음 단계/제출
   requiredSentences: 9,        // 최종본 필요 문장 수
   requiredExpressions: 5,      // Word Bank 필요 표현 수
@@ -835,11 +833,11 @@ function refresh() {
 const ORDER = { research: 0, draft: 1, draftDone: 2, final: 3, done: 4 };
 const PHASE_LABEL = { research: "조사·브레인스토밍", draft: "초안 쓰기", draftDone: "1회차 완료", final: "최종 글쓰기", done: "제출 완료" };
 const urlQ = new URLSearchParams(location.search);
-let urlSession = +urlQ.get("session") || 0;
-let serverSession = 0;
 const urlMin = { research: +urlQ.get("r") || 0, draft: +urlQ.get("d") || 0, final: +urlQ.get("f") || 0 };
-
-function currentSession() { return urlSession || serverSession || CONFIG.session || 1; }
+let finalOpen = true;          // 서버에서 closeFinal() 로 닫아 두면 false
+let serverInfo = null;         // 로그인 때 서버가 준 정보
+let dirty = false;             // 마지막 서버 저장 이후 바뀐 것이 있는지
+let autosaveTimer = null;
 function phaseAllows(step) {
   const ph = state.phase;
   if (ph === "research") return step === 1 || step === 2;
@@ -854,6 +852,7 @@ function phaseMinutes() {
   return urlMin[key] || (CONFIG.phases && CONFIG.phases[key]) || 20;
 }
 
+function markDirty() { dirty = true; }
 function applyPhase() {
   const ph = state.phase;
   $("step4").hidden = !(ph === "final" || ph === "done");
@@ -896,7 +895,7 @@ function onInput(e) {
     el.dataset.len = el.value.length;
   }
   refresh();
-  scheduleSave();
+  scheduleSave(); markDirty();
 }
 
 function blockPaste(e) {
@@ -907,7 +906,7 @@ function addLine(pi) {
   if (!canEdit(3)) return;
   if (state.draft[pi].length >= 8) { toast("한 부분에는 8문장까지 쓸 수 있습니다."); return; }
   state.draft[pi].push("");
-  renderParts(); refresh(); scheduleSave();
+  renderParts(); refresh(); scheduleSave(); markDirty();
   const last = document.querySelector('[data-part="' + pi + '"][data-line="' + (state.draft[pi].length - 1) + '"]');
   if (last) last.focus();
 }
@@ -924,7 +923,7 @@ async function importDraft() {
   state.final = text;
   const f = $("final"); f.value = text; f.dataset.len = text.length; grow(f);
   hangulFlag["final"] = HANGUL.test(text);
-  refresh(); scheduleSave(); f.focus();
+  refresh(); scheduleSave(); markDirty(); f.focus();
 }
 
 // ---------- 이탈·잠금 감시 (잠금 단계에서만) ----------
@@ -1069,7 +1068,7 @@ async function startDraft(byClick, reason) {
     if (r.value !== "go") { if (fsElement()) exitFsQuiet(); return; }
   }
   locked = false; $("banner").hidden = true;
-  setPhase("draft"); state.phaseLog.draftHow = reason || "학생 시작"; save();
+  setPhase("draft"); state.phaseLog.draftHow = reason || "학생 시작"; save(); markDirty(); autosaveToServer(true);
   applyPhase(); startTick(); ensureFsSoon();
   const y = $("step3").getBoundingClientRect().top + window.scrollY - 80;
   window.scrollTo({ top: y, behavior: "smooth" });
@@ -1175,13 +1174,42 @@ async function postToServer(kind, reason) {
     return !!(at && Date.now() - new Date(at).getTime() < 3 * 60 * 1000);
   } catch (e) { return null; }
 }
-async function fetchRemoteDraft(sid, name) {
-  const r = await jsonp({ action: "draft", sid, name }, 7000);
-  if (!r || !r.found || !r.data) return null;
-  const obj = typeof r.data === "string" ? JSON.parse(r.data) : r.data;
-  if (!obj || String(obj.sid) !== String(sid)) return null;
-  return obj;
+// 로그인: 서버에 저장된 상태를 가져온다. { found, data, finalAt, finalOpen, reason }
+async function fetchRemote(sid, name) {
+  const r = await jsonp({ action: "load", sid, name }, 7000);
+  if (!r) return null;
+  if (typeof r.finalOpen === "boolean") finalOpen = r.finalOpen;
+  let data = null;
+  if (r.found && r.data) {
+    try { data = typeof r.data === "string" ? JSON.parse(r.data) : r.data; } catch (e) { data = null; }
+    if (data && String(data.sid) !== String(sid)) data = null;
+  }
+  return { data, finalAt: r.finalAt || null, reason: r.reason || "", error: r.error || "" };
 }
+
+// 작성 중 자동 저장 (서버). 바뀐 것이 있을 때만 보낸다.
+async function autosaveToServer(force) {
+  const cfg = CONFIG.submit;
+  if (!cfg.scriptUrl || !state.sid) return;
+  if (!(state.phase in { research: 1, draft: 1, final: 1 })) return;
+  if (!dirty && !force) return;
+  dirty = false;
+  try {
+    const body = new URLSearchParams();
+    body.append("token", cfg.token || ""); body.append("phase", "save");
+    body.append("sid", state.sid); body.append("name", state.name);
+    body.append("meta", "자동저장 " + (PHASE_LABEL[state.phase] || state.phase) + " | 초안 문장 " + draftSentenceCount());
+    body.append("brainstorm", buildBrainstorm()); body.append("draft", buildDraft()); body.append("final", state.final);
+    body.append("data", JSON.stringify(state));
+    await fetch(cfg.scriptUrl, { method: "POST", mode: "no-cors", body, keepalive: true });
+  } catch (e) { dirty = true; }
+}
+function startAutosave() {
+  clearInterval(autosaveTimer);
+  const sec = +urlQ.get("as") || CONFIG.autosaveSec || 0;
+  if (sec > 0) autosaveTimer = setInterval(() => autosaveToServer(false), sec * 1000);
+}
+document.addEventListener("visibilitychange", () => { if (document.hidden && !$("app").hidden) autosaveToServer(false); });
 function pickState(local, remote) {
   if (!local) return remote; if (!remote) return local;
   const ol = ORDER[local.phase] || 0, orr = ORDER[remote.phase] || 0;
@@ -1195,7 +1223,7 @@ async function submitDraft(reason) {
   closeModal();
   state.draftSubmittedAt = Date.now(); state.draftReason = reason;
   setPhase("draftDone"); state.phaseStartedAt = 0;
-  setLocked(true); save();
+  setLocked(true); save(); clearInterval(autosaveTimer);
   showDone("draft");
   if (CONFIG.submit.scriptUrl) {
     setDoneStatus("초안을 저장하는 중입니다…", false);
@@ -1220,7 +1248,7 @@ async function submitNow(reason) {
   closeModal();
   state.submitted = true; state.submittedAt = Date.now(); state.submitReason = reason;
   setPhase("done"); state.phaseStartedAt = 0;
-  setLocked(true); setFsLost(false); save();
+  setLocked(true); setFsLost(false); save(); clearInterval(autosaveTimer);
   showDone("final");
   if (CONFIG.submit.scriptUrl) {
     setDoneStatus("전송 중입니다…", false);
@@ -1241,11 +1269,12 @@ async function submitNow(reason) {
 function setDoneStatus(msg, bad) { const s = $("doneStatus"); s.textContent = msg; s.className = "done-status" + (bad ? " bad" : ""); }
 
 function showDone(kind) {
-  $("app").hidden = true; $("gate").hidden = true; $("done").hidden = false; $("noDraft").hidden = true;
+  $("app").hidden = true; $("gate").hidden = true; $("done").hidden = false;
   const isDraft = kind === "draft";
   $("doneTitle").textContent = isDraft ? "1회차 제출 완료" : "제출되었습니다";
   $("doneHint").textContent = isDraft
-    ? "이 화면을 선생님께 보여 주세요. 2회차에 같은 주소를 열고 같은 학번·이름을 입력하면 초안이 그대로 나타납니다."
+    ? (finalOpen ? "이 화면을 선생님께 보여 주세요. 다음에 같은 학번·이름으로 로그인하면 초안이 그대로 열리고 최종 글쓰기를 시작합니다."
+                 : "이 화면을 선생님께 보여 주세요. 최종 글쓰기(2회차)는 선생님이 열면 시작됩니다. 그때 같은 학번·이름으로 로그인하세요.")
     : "이 화면을 선생님께 보여 주세요. 화면을 닫아도 같은 학번으로 다시 열면 이 화면이 나타납니다.";
   $("copyBtn").textContent = isDraft ? "초안 복사" : "최종본 복사";
   const text = isDraft ? draftText() : state.final;
@@ -1320,7 +1349,7 @@ async function teacherMenu() {
     if (r.input !== CONFIG.teacherPin) { toast("PIN이 맞지 않습니다."); return; }
     const onGate = !$("gate").hidden;
     const who = state.sid ? state.sid + " " + state.name : "(시작 전)";
-    const info = who + " · " + (PHASE_LABEL[state.phase] || "") + (state.phaseStartedAt ? " · 남은 " + Math.max(0, Math.ceil(remainingSec() / 60)) + "분" : "") + " · " + currentSession() + "회차";
+    const info = who + " · " + (PHASE_LABEL[state.phase] || "") + (state.phaseStartedAt ? " · 남은 " + Math.max(0, Math.ceil(remainingSec() / 60)) + "분" : "") + (finalOpen ? "" : " · 최종 닫힘");
     const buttons = [];
     if (!onGate) {
       buttons.push({ label: "5분 추가", value: "add" });
@@ -1328,9 +1357,13 @@ async function teacherMenu() {
       if (locked && (state.phase === "draft" || state.phase === "final")) buttons.push({ label: "잠금 해제 + 5분", value: "unlock" });
     }
     if (state.phase === "draftDone" || state.phase === "done") buttons.push({ label: "제출 취소 (다시 열기)", value: "reopen" });
-    if (onGate && state.sid) {
-      buttons.push({ label: "초안 없이 최종만 진행", value: "finalOnly" });
-      buttons.push({ label: "1회차부터 전체 진행", value: "fullFlow" });
+    if (onGate) {
+      const sidNow = $("sid").value.trim(), nameNow = $("name").value.trim();
+      if (/^\d{3,}$/.test(sidNow) && nameNow) {
+        if (!state.sid || state.sid !== sidNow) { const local = load(sidNow); if (local) restoreState(local); else newState(sidNow, nameNow); }
+        buttons.push({ label: "초안 없이 최종만 진행", value: "finalOnly" });
+        buttons.push({ label: "처음(1회차)부터 진행", value: "fullFlow" });
+      }
     }
     if (state.sid) buttons.push({ label: "데이터 삭제", value: "wipe" });
     buttons.push({ label: "닫기", value: null });
@@ -1353,12 +1386,13 @@ async function teacherMenu() {
       if (!state.startedAt) newState(state.sid, state.name);
       state.phaseLog = state.phaseLog || {}; state.draftReason = "초안 없음(교사 허용)";
       setPhase("draftDone"); state.phaseStartedAt = 0; save();
-      $("noDraft").hidden = true; beginFinal();
+      beginFinal();
     }
     else if (c.value === "fullFlow") {
       if (!state.startedAt) newState(state.sid, state.name);
-      state.allowFullFlow = true; setPhase("research"); save();
-      $("noDraft").hidden = true; enterApp();
+      state.submitted = false; state.sent = null; state.draftSubmittedAt = 0; state.draftSent = null;
+      setPhase("research"); save();
+      enterApp();
     }
     else if (c.value === "wipe") {
       const ok = await dialog({ title: "데이터 삭제", text: who + " 학생의 이 기기 저장 데이터를 지우고 처음부터 다시 시작합니다. (선생님 드라이브의 초안은 지워지지 않습니다.)",
@@ -1400,7 +1434,7 @@ function enterApp() {
     el.dataset.len = el.value.length;
     hangulFlag[el.id || (el.dataset.part + ":" + el.dataset.line)] = HANGUL.test(el.value);
   });
-  applyPhase(); save(); startTick(); ensureFsSoon();
+  applyPhase(); save(); startTick(); ensureFsSoon(); startAutosave(); dirty = true;
   window.scrollTo(0, 0);
 }
 function beginFinal() {
@@ -1415,50 +1449,44 @@ async function start() {
   const note = $("gateNote");
   if (!/^\d{3,}$/.test(sid)) { note.textContent = "학번을 숫자로 입력하세요."; note.className = "gate-note error"; $("sid").focus(); return; }
   if (!name) { note.textContent = "이름을 입력하세요."; note.className = "gate-note error"; $("name").focus(); return; }
-  const sess = currentSession();
-  // 2회차(최종)는 잠금 단계라 시작 버튼 클릭 시점에 전체 화면을 요청해 둔다 (사용자 동작이 필요)
-  if (sess === 2 && !ENV.ios && !ENV.standalone && fsSupported() && CONFIG.lock && CONFIG.lock.requireFullscreen) requestFs();
 
   $("startBtn").disabled = true; note.textContent = "저장된 내용을 확인하는 중…"; note.className = "gate-note";
   const local = load(sid);
-  let remote = null;
-  if (CONFIG.submit.scriptUrl && !(local && ORDER[local.phase] >= ORDER.final)) {
-    try { remote = await fetchRemoteDraft(sid, name); } catch (e) { remote = null; }
+  let remote = null, serverOk = false;
+  if (CONFIG.submit.scriptUrl) {
+    try { remote = await fetchRemote(sid, name); serverOk = !!remote && !remote.error; } catch (e) { remote = null; }
   }
   $("startBtn").disabled = false; note.textContent = "";
-  const chosen = pickState(local, remote);
+
+  // 학번은 있는데 이름이 다르면 다른 학생의 기록일 수 있으므로 막는다
+  if (remote && remote.reason === "NAME_MISMATCH") {
+    note.textContent = "이 학번으로 저장된 이름과 다릅니다. 지난번에 입력한 이름과 똑같이 써 주세요."; note.className = "gate-note error";
+    return;
+  }
+  if (!serverOk && CONFIG.submit.scriptUrl && !local) {
+    note.textContent = "서버에 연결할 수 없어 이 기기의 저장 내용만 사용합니다."; note.className = "gate-note";
+  }
+
+  const chosen = pickState(local, remote && remote.data);
   if (chosen) { restoreState(chosen); if (name && name !== state.name) state.name = name; }
   else newState(sid, name);
   state.env = ENV.standalone ? "home" : "browser";
+  if (remote && remote.finalAt && !state.submitted) { state.submitted = true; state.phase = "done"; state.sent = true; if (!state.submittedAt) state.submittedAt = new Date(remote.finalAt).getTime() || Date.now(); }
+  save();
 
+  // 서버 상태에 따라 단계 자동 결정
   if (state.submitted || state.phase === "done") { showDone("final"); return; }
-
-  if (sess === 2) {
-    if (state.phase === "final") { enterApp(); return; }
-    if (state.phase === "draftDone") { beginFinal(); return; }
-    if (state.allowFullFlow) { if (!state.phaseStartedAt) setPhase("research"); enterApp(); return; }
-    save(); $("noDraft").hidden = false; if (fsElement()) exitFsQuiet();
-    return;
-  }
-  // 1회차
-  if (state.phase === "draftDone") { showDone("draft"); return; }
-  if (state.phase === "final") { enterApp(); return; }   // 교사가 최종으로 넘긴 경우
+  if (state.phase === "final") { if (!finalOpen) { showDone("draft"); return; } enterApp(); return; }
+  if (state.phase === "draftDone") { if (!finalOpen) { showDone("draft"); return; } beginFinal(); return; }
   if (!state.phaseStartedAt) setPhase("research");
   enterApp();
   if (chosen) toast("이어서 작성합니다. 남은 시간은 그대로입니다.", 3000);
 }
 
-function updateSessionBox() {
-  const sess = currentSession();
-  $("sessionBox").innerHTML = sess === 2
-    ? "<b>2회차</b> 최종 글쓰기 — 1회차 때와 같은 학번·이름을 입력하면 초안이 나타납니다. 1회차 내용은 고칠 수 없습니다."
-    : "<b>1회차</b> 조사·브레인스토밍 → 초안 — 조사 중에는 다른 앱을 써도 되고, 초안 쓰기를 시작하면 잠깁니다.";
-}
-
 function init() {
   if (urlQ.get("home") === "1") CONFIG.lock.requireHomeScreen = true;
   renderStatic();
-  updateSessionBox();
+  $("verTag").textContent = "버전 " + (CONFIG.version || "");
 
   const envBadge = $("stEnv");
   envBadge.hidden = false;
@@ -1467,10 +1495,6 @@ function init() {
     $("homeGuide").hidden = false; $("gateForm").hidden = true; $("startBtn").hidden = true; $("gateNote").hidden = true;
   }
 
-  // 서버에 회차 설정이 있으면 반영 (주소의 ?session= 이 있으면 그것이 우선)
-  if (CONFIG.submit.scriptUrl && !urlSession) {
-    jsonp({ action: "session" }, 5000).then((r) => { if (r && +r.session) { serverSession = +r.session; updateSessionBox(); } }).catch(() => {});
-  }
 
   document.addEventListener("input", onInput);
   document.addEventListener("paste", blockPaste, true);
@@ -1495,13 +1519,11 @@ function init() {
   $("name").addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
   $("sid").addEventListener("input", () => {
     const saved = load($("sid").value.trim()); const note = $("gateNote");
-    $("noDraft").hidden = true;
     if (saved && saved.startedAt) {
       note.textContent = saved.submitted ? "이미 최종 제출한 학번입니다." : saved.phase === "draftDone" ? "1회차 초안이 이 기기에 있습니다." : "저장된 내용이 있습니다. 시작하면 이어서 작성합니다.";
       note.className = "gate-note";
     } else { note.textContent = ""; note.className = "gate-note"; }
   });
-  $("retryBtn").addEventListener("click", start);
   $("startDraftBtn").addEventListener("click", () => startDraft(true));
   $("importBtn").addEventListener("click", importDraft);
   $("submitBtn").addEventListener("click", openModal);
