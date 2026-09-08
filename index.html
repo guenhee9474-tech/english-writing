@@ -502,7 +502,7 @@
    교사용 설정 (여기만 고치면 됩니다)
    ════════════════════════════════════════════════════════════════ */
 const CONFIG = {
-  version: "2026-09-09 (기기 열쇠판)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
+  version: "2026-09-09b (기기 열쇠판)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
   title: "Good for All of Us: A Place for Everyone",
   subtitle: "1학년 2학기 영어 쓰기 수행평가",
 
@@ -673,7 +673,7 @@ function analyze(text) {
 const state = {
   sid: "", name: "", startedAt: 0, extraSec: 0,
   step1: [], step2: [], draft: [], final: "",
-  leaves: [], hangul: 0, bursts: 0, hangulSel: 0, env: "", fsNote: "", lookups: [],
+  leaves: [], hangul: 0, bursts: 0, hangulSel: 0, env: "", fsNote: "", lookups: [], autoText: 0,
   submitted: false, submittedAt: 0, submitReason: "", sent: null,
   phase: "research", phaseStartedAt: 0, phaseLog: {}, savedAt: 0,
   draftSubmittedAt: 0, draftReason: "", draftSent: null, allowFullFlow: false
@@ -849,6 +849,7 @@ function refresh() {
     '<div class="' + (state.leaves.length ? "bad" : "") + '">화면 이탈 <b>' + state.leaves.length + "</b>회</div>" +
     '<div class="' + (state.hangul ? "bad" : "") + '">영어 칸 한글 입력 <b>' + state.hangul + "</b>회</div>" +
     '<div class="' + (state.bursts ? "bad" : "") + '">대량 입력 <b>' + state.bursts + "</b>회</div>" +
+    '<div class="' + (state.autoText ? "bad" : "") + '">자동완성 차단 <b>' + state.autoText + "</b>회</div>" +
     '<div class="' + (state.hangulSel ? "bad" : "") + '">한글 선택 <b>' + state.hangulSel + "</b>회</div>" +
     "<div>사전 조회 <b>" + (state.lookups || []).length + "</b>회</div>" +
     "<div>초안 문장 <b>" + draftSentenceCount() + "</b>개</div>" +
@@ -1143,6 +1144,7 @@ function buildMeta(reason, kind) {
   parts.push("한글입력 " + state.hangul + "회", "한글선택 " + state.hangulSel + "회", "대량입력 " + state.bursts + "회");
   const lk = state.lookups || [];
   parts.push("사전 " + lk.length + "회" + (lk.length ? " [" + lk.map((l) => l.q + "→" + l.a).join(", ") + "]" : ""));
+  parts.push("자동완성차단 " + (state.autoText || 0) + "회");
   parts.push("환경 " + (ENV.standalone ? "홈화면앱" : "브라우저") + (state.fsNote ? "(" + state.fsNote + ")" : ""));
   parts.push("소요 조사 " + mins(L.researchStart, L.researchEnd) + " / 초안 " + mins(L.draftStart, L.draftEnd) + " / 최종 " + mins(L.finalStart, L.finalEnd));
   if (state.draftSubmittedAt) parts.push("1회차 제출 " + fmtClock(new Date(state.draftSubmittedAt)).slice(0, 5) + " (" + (state.draftReason || "") + ")");
@@ -1503,7 +1505,7 @@ function newState(sid, name) {
   state.final = ""; state.leaves = []; state.hangul = 0; state.bursts = 0; state.hangulSel = 0;
   state.submitted = false; state.submittedAt = 0; state.submitReason = ""; state.sent = null;
   state.phase = "research"; state.phaseStartedAt = 0; state.phaseLog = {}; state.savedAt = 0;
-  state.draftSubmittedAt = 0; state.draftReason = ""; state.draftSent = null; state.allowFullFlow = false; state.fsNote = ""; state.lookups = [];
+  state.draftSubmittedAt = 0; state.draftReason = ""; state.draftSent = null; state.allowFullFlow = false; state.fsNote = ""; state.lookups = []; state.autoText = 0;
 }
 function restoreState(saved) {
   Object.assign(state, saved);
@@ -1514,7 +1516,7 @@ function restoreState(saved) {
     while (arr.length < p.min) arr.push("");
     return arr;
   });
-  state.leaves = state.leaves || []; state.hangulSel = state.hangulSel || 0; state.lookups = state.lookups || [];
+  state.leaves = state.leaves || []; state.hangulSel = state.hangulSel || 0; state.lookups = state.lookups || []; state.autoText = state.autoText || 0;
   state.phase = state.phase || (state.submitted ? "done" : "research");
   state.phaseLog = state.phaseLog || {};
 }
@@ -1591,7 +1593,17 @@ function init() {
   document.addEventListener("paste", blockPaste, true);
   document.addEventListener("drop", blockPaste, true);
   document.addEventListener("beforeinput", (e) => {
-    if (!$("app").hidden && (e.inputType === "insertFromPaste" || e.inputType === "insertFromDrop")) { e.preventDefault(); toast("붙여넣기는 사용할 수 없습니다. 직접 입력하세요."); }
+    if ($("app").hidden) return;
+    if (e.inputType === "insertFromPaste" || e.inputType === "insertFromDrop") { e.preventDefault(); toast("붙여넣기는 사용할 수 없습니다. 직접 입력하세요."); return; }
+    // 영어 칸: 자동 수정(단어 교체)과 예측 텍스트 수락(여러 글자가 한 번에 들어옴)을 막고 기록
+    if (isWritingField(e.target)) {
+      const multi = e.inputType === "insertText" && typeof e.data === "string" && e.data.length > 1 && !/^\s+$/.test(e.data);
+      if (e.inputType === "insertReplacementText" || multi) {
+        e.preventDefault();
+        state.autoText = (state.autoText || 0) + 1; refresh(); scheduleSave(); markDirty();
+        toast("자동 수정·자동 완성은 사용할 수 없습니다. 직접 입력하세요.");
+      }
+    }
   }, true);
   document.addEventListener("click", (e) => {
     const add = e.target.closest("[data-add]"); if (add) addLine(+add.dataset.add);
