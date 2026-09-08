@@ -135,6 +135,7 @@ function doPost(e) {
 
     if (p.phase === "save") {                          // 작성 중 자동 저장: 상태 + 읽을 수 있는 텍스트
       saveDraft(data, p.data || "", phaseOf(p.data), "");
+      scheduleOverview();                              // 수업 중에도 총괄이 저절로 갱신되게
       return textOut("OK_SAVE");
     }
     // 교사 메뉴 "제출 취소 (다시 열기)": 단계만 되돌립니다. 학생이 다시 쓴 글은 이후 자동 저장으로 정상 저장됩니다.
@@ -152,6 +153,7 @@ function doPost(e) {
         catch (e0) { logError("초안 PDF", e0, data.sid); link = "PDF 실패: " + String(e0 && e0.message || e0).slice(0, 120); }
       }
       saveDraft(data, p.data || "", "draftDone", link, { allowRegress: true });
+      scheduleOverview();
       return textOut("OK_DRAFT");
     }
     if (p.phase !== "final") return textOut("BAD_PHASE");   // 모르는 단계 값을 최종 제출로 처리하지 않는다
@@ -166,8 +168,9 @@ function doPost(e) {
     if (CFG.logSheet) { try { logRow(data, files); } catch (e1) { logError("제출명단 기록", e1, data.sid); } }
     try { saveDraft(data, p.data || "", "done", files[0] ? files[0].getUrl() : "", { allowRegress: true }); } catch (e3) { logError("최종 상태 저장", e3, data.sid); }
     if (CFG.notifyEmail) { try { sendMail(data, files); } catch (e2) { logError("메일 보내기", e2, data.sid); } }
-    // 총괄 시트는 여기서 다시 쓰지 않습니다(제출이 몰릴 때 가장 무거운 작업이라 실행 시간 제한을 넘겼습니다).
-    // 5분마다 자동 갱신하려면 편집기에서 installOverviewTrigger 를 한 번 실행하세요.
+    // 총괄 시트는 여기서 직접 쓰지 않고 "잠시 뒤 한 번" 예약합니다.
+    // 제출이 몰릴 때 여기서 바로 쓰면 가장 무거운 작업이 30번 겹쳐 실행 시간 제한을 넘깁니다.
+    scheduleOverview();
     return textOut("OK");
   } catch (err) {
     // 실패해도 학생 화면이 멈추지 않도록 항상 응답합니다. 오류는 "오류" 탭(과 설정한 메일)에 남깁니다.
@@ -728,7 +731,8 @@ function rebuildOverview() {
 
     const header = ["반", "학번", "이름", "상태", "첫 접속", "마지막 저장", "초안 제출", "초안 문장", "최종 제출", "최종 문장", "표현", "이탈", "한글", "사전", "소요(조사/초안/최종)", "중복", "명단 확인", "초안 PDF", "최종 PDF"];
     let sh = ss.getSheetByName(ov.name || "총괄");
-    if (!sh) sh = ss.insertSheet(ov.name || "총괄");
+    let fresh = false;
+    if (!sh) { sh = ss.insertSheet(ov.name || "총괄"); fresh = true; }
     sh.clear();
     sh.getRange(1, 1, 1, header.length).setValues([header]).setFontWeight("bold").setBackground("#F2F4F7");
     if (lines.length) {
@@ -739,7 +743,8 @@ function rebuildOverview() {
       sh.getRange(2, 16, lines.length, 1).setBackgrounds(dupColors);
     }
     sh.setFrozenRows(1); sh.setFrozenColumns(3);
-    [80, 60, 70, 90, 90, 90, 90, 60, 90, 60, 50, 50, 50, 50, 130, 50, 90, 200, 200].forEach((w, i) => sh.setColumnWidth(i + 1, w));
+    // 열 너비는 sh.clear() 로 지워지지 않으므로 시트를 처음 만들 때만 설정합니다(갱신이 자주 도니까).
+    if (fresh) [80, 60, 70, 90, 90, 90, 90, 60, 90, 60, 50, 50, 50, 50, 130, 50, 90, 200, 200].forEach((w, i) => sh.setColumnWidth(i + 1, w));
     sh.getRange(1, header.length + 2).setValue("마지막 갱신 " + Utilities.formatDate(new Date(), "Asia/Seoul", "MM-dd HH:mm:ss"));
 
     // 반별 요약 (학생 단위로 셈: 같은 학번의 여러 줄은 가장 앞선 상태 하나로)
@@ -770,13 +775,42 @@ function rebuildOverview() {
   } finally { try { lock.releaseLock(); } catch (e) {} }
 }
 
-// 수업 중 5분마다 자동 갱신하고 싶을 때 한 번 실행 (끝나면 removeOverviewTrigger)
-function installOverviewTrigger() {
-  removeOverviewTrigger();
-  ScriptApp.newTrigger("rebuildOverview").timeBased().everyMinutes(5).create();
+/* ── 총괄 시트 자동 갱신 (선생님이 아무것도 하지 않아도 됩니다) ──────────────
+   학생 요청(자동 저장·제출)이 들어오면 "잠시 뒤에 한 번 갱신"을 예약합니다.
+   이미 예약이 있으면 아무것도 하지 않으므로, 30명이 동시에 저장해도 갱신은 한 번만 돕니다.
+   갱신은 학생 요청과 따로(트리거로) 돌기 때문에 제출이 느려지지 않고, 실행 시간 제한도 건드리지 않습니다.
+   수업이 없을 때는 요청이 없으니 아무것도 돌지 않습니다. 켜고 끄는 작업이 필요 없습니다. */
+
+const OV_DEBOUNCE_SEC = 120;      // 이 시간 안에 들어온 요청들은 갱신 한 번으로 묶습니다
+const OV_DELAY_SEC = 60;          // 예약하고 이만큼 뒤에 갱신합니다
+
+function scheduleOverview() {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const at = Number(props.getProperty("ovPending") || 0);
+    const now = Date.now();
+    if (at && (now - at) < OV_DEBOUNCE_SEC * 1000) return;      // 이미 예약되어 있음
+    dropTriggers("overviewOnce");                               // 오래된 예약이 남아 있으면 치운다
+    props.setProperty("ovPending", String(now));
+    ScriptApp.newTrigger("overviewOnce").timeBased().after(OV_DELAY_SEC * 1000).create();
+  } catch (e) { logError("총괄 갱신 예약", e, ""); }
 }
-function removeOverviewTrigger() {
-  ScriptApp.getProjectTriggers().forEach((t) => { if (t.getHandlerFunction() === "rebuildOverview") ScriptApp.deleteTrigger(t); });
+// 예약된 갱신이 실제로 도는 함수. 자기 예약을 지우고 한 번 갱신합니다.
+function overviewOnce() {
+  try { PropertiesService.getScriptProperties().deleteProperty("ovPending"); } catch (e) {}
+  dropTriggers("overviewOnce");
+  try { rebuildOverview(); } catch (e) { logError("총괄 갱신", e, ""); }
+}
+function dropTriggers(fn) {
+  try { ScriptApp.getProjectTriggers().forEach((t) => { if (t.getHandlerFunction() === fn) ScriptApp.deleteTrigger(t); }); } catch (e) {}
+}
+// 예약이 꼬였을 때(총괄이 안 바뀔 때) 한 번 실행하면 초기화됩니다.
+function resetOverviewSchedule() {
+  try { PropertiesService.getScriptProperties().deleteProperty("ovPending"); } catch (e) {}
+  dropTriggers("overviewOnce");
+  dropTriggers("rebuildOverview");
+  rebuildOverview();
+  Logger.log("총괄 갱신 예약을 초기화하고 지금 한 번 갱신했습니다.");
 }
 
 /* ────────────────────────── 오류 기록 · PDF 다시 만들기 ────────────────────────── */

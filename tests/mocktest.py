@@ -175,9 +175,20 @@ def check_server_file():
           [l.strip() for l in gs.splitlines() if 'waitLock' in l])
     check('저장·로그인이 잠금을 반드시 잡는다',
           gs.count('}, true);') >= 2 and 'function withLock' in gs)
-    check('제출할 때 총괄 시트를 다시 쓰지 않는다',
-          not re.search(r'try \{ rebuildOverview\(\); \} catch', gs),
-          '제출이 몰릴 때 실행 시간 제한을 넘긴다')
+    dopost = gs[gs.index('function doPost(e)'):gs.index('function doGet(e)')]
+    check('제출을 받는 동안 총괄 시트를 직접 쓰지 않는다',
+          'rebuildOverview' not in dopost,
+          '제출이 몰릴 때 가장 무거운 작업이 겹쳐 실행 시간 제한을 넘긴다')
+    check('총괄 갱신이 자동으로 예약된다',
+          gs.count('scheduleOverview();') == 3 and 'function scheduleOverview' in gs,
+          '자동 저장·초안 제출·최종 제출 세 곳에서 불러야 한다: ' + str(gs.count('scheduleOverview();')))
+    check('예약이 몰려도 갱신은 한 번만 돈다', "getProperty(\"ovPending\")" in gs and 'OV_DEBOUNCE_SEC' in gs)
+    check('예약된 갱신이 자기 트리거를 지운다',
+          'function overviewOnce' in gs and "dropTriggers(\"overviewOnce\")" in gs)
+    check('선생님이 손으로 켜고 끌 필요가 없다',
+          'installOverviewTrigger' not in gs and 'removeOverviewTrigger' not in gs,
+          '수업마다 실행해야 하는 함수가 남아 있으면 안 된다')
+    check('꼬였을 때 초기화할 방법이 있다', 'function resetOverviewSchedule' in gs)
     check('없는 함수를 부르지 않는다 (exportDocx)', 'exportDocx' not in gs)
     check('모르는 단계를 최종 제출로 처리하지 않는다',
           'if (p.phase !== "final") return textOut("BAD_PHASE");' in gs)
