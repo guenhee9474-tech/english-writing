@@ -278,6 +278,21 @@ function allRows(sh) {
   const last = sh.getLastRow();
   return last < 2 ? [] : sh.getRange(2, 1, last - 1, DRAFT_HEADER.length).getValues();
 }
+// 총괄 시트용: 큰 칸(브레인스토밍·초안·데이터JSON)은 읽지 않고 자리만 비워 둔다.
+// 한 학생 줄의 99%가 그 세 칸이고 갱신이 1~2분마다 도므로 차이가 크다. 열 위치는 COL 그대로 유지된다.
+function overviewRows(sh) {
+  const last = sh.getLastRow();
+  const n = last - 1;
+  if (n < 1) return [];
+  const a = sh.getRange(2, 1, n, 8).getValues();              // 학번 … 자동집계 (1-8)
+  const b = sh.getRange(2, COL.pdf, n, 1).getValues();        // 초안 PDF (11)
+  const c = sh.getRange(2, COL.dup, n, 4).getValues();        // 중복 … 최종 PDF (13-16)
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push(a[i].concat(["", "", b[i][0], ""], c[i]));        // 9,10 = 빈칸 / 12 = 빈칸
+  }
+  return out;
+}
 // 학번·이름·열쇠 칸만 읽습니다 (브레인스토밍·초안·JSON 같은 큰 칸을 건드리지 않아 훨씬 가볍습니다)
 function idRows(sh) {
   const last = sh.getLastRow();
@@ -696,7 +711,7 @@ function rebuildOverview() {
   try {
     const ss = SpreadsheetApp.openById(getLogSheet().getParent().getId());
     const ov = CFG.overview || {};
-    const rows = allRows(draftSheet());
+    const rows = overviewRows(draftSheet());
 
     // 명단(선택): A열 학번, B열 이름
     const roster = {};

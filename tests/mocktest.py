@@ -189,6 +189,14 @@ def check_server_file():
           'installOverviewTrigger' not in gs and 'removeOverviewTrigger' not in gs,
           '수업마다 실행해야 하는 함수가 남아 있으면 안 된다')
     check('꼬였을 때 초기화할 방법이 있다', 'function resetOverviewSchedule' in gs)
+    check('총괄 갱신이 학생 글 전체를 읽지 않는다',
+          'function overviewRows' in gs and 'const rows = overviewRows(draftSheet());' in gs,
+          '갱신이 1~2분마다 도므로 큰 칸을 읽으면 느려진다')
+    # overviewRows 가 만드는 16칸의 위치가 COL 과 맞는지 (틀리면 총괄에 엉뚱한 값이 찍힌다)
+    ovcols = a_ = None
+    m = re.search(r'out\.push\(a\[i\]\.concat\(\["", "", b\[i\]\[0\], ""\], c\[i\]\)\);', gs)
+    check('총괄이 읽는 열 위치가 맞다', m is not None,
+          '1-8 + 빈칸2 + 초안PDF + 빈칸 + 13-16 = 16칸이어야 한다')
     check('없는 함수를 부르지 않는다 (exportDocx)', 'exportDocx' not in gs)
     check('모르는 단계를 최종 제출로 처리하지 않는다',
           'if (p.phase !== "final") return textOut("BAD_PHASE");' in gs)
