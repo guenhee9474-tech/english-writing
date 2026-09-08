@@ -453,6 +453,7 @@
     <div class="done-grid" id="doneGrid"></div>
     <div class="done-text" id="doneText"></div>
     <div class="done-actions">
+      <button id="retryBtn" class="btn primary" hidden>선생님께 다시 보내기</button>
       <button id="copyBtn" class="btn">최종본 복사</button>
       <button id="saveBtn" class="btn">파일로 저장</button>
     </div>
@@ -502,7 +503,7 @@
    교사용 설정 (여기만 고치면 됩니다)
    ════════════════════════════════════════════════════════════════ */
 const CONFIG = {
-  version: "2026-09-09c (기기 열쇠판)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
+  version: "2026-09-09d (안정성 보강판)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
   title: "Good for All of Us: A Place for Everyone",
   subtitle: "1학년 2학기 영어 쓰기 수행평가",
 
@@ -594,13 +595,7 @@ const CONFIG = {
     // (권장) Apps Script 웹 앱 주소. 제출물이 PDF/Word로 바뀌어 드라이브에 저장되고 메일로 옵니다.
     // 함께 드린 Code.gs 파일의 설치 안내를 따라 배포한 뒤 나오는 .../exec 주소를 넣으세요.
     scriptUrl: "https://script.google.com/macros/s/AKfycbzq2ub-CXiHUErkWcvN7YgPbNacIoDZZlT6jNsRSKB6G1nWOivxRzfjlAIp83kQdPvl4Q/exec",
-    token: "gfa2026",            // Code.gs 의 CFG.token 과 같아야 합니다.
-
-    // (대안) 구글 설문지로 받기. scriptUrl 을 쓰면 이 부분은 비워 두세요.
-    formAction: "",              // 예: "https://docs.google.com/forms/d/e/1FAIpQLSe.../formResponse"
-    entries: {                   // 예: "entry.1234567890"
-      sid: "", name: "", brainstorm: "", draft: "", final: "", meta: ""
-    }
+    token: "gfa2026"             // Code.gs 의 CFG.token 과 같아야 합니다.
   }
 };
 /* ════════════════════════════════════════════════════════════════ */
@@ -673,10 +668,12 @@ function analyze(text) {
 const state = {
   sid: "", name: "", startedAt: 0, extraSec: 0,
   step1: [], step2: [], draft: [], final: "",
-  leaves: [], hangul: 0, bursts: 0, hangulSel: 0, env: "", fsNote: "", lookups: [], autoText: 0,
+  leaves: [], leavesDropped: 0, hangul: 0, bursts: 0, hangulSel: 0, env: "", fsNote: "", lookups: [], autoText: 0,
   submitted: false, submittedAt: 0, submitReason: "", sent: null,
   phase: "research", phaseStartedAt: 0, phaseLog: {}, savedAt: 0,
-  draftSubmittedAt: 0, draftReason: "", draftSent: null, allowFullFlow: false
+  draftSubmittedAt: 0, draftReason: "", draftSent: null,
+  // 선생님이 시트 내용으로 PDF를 다시 만들 때(regeneratePdf) 제목이 필요해서 함께 저장합니다.
+  title: "", subtitle: ""
 };
 let locked = false;
 let fsLost = false;
@@ -774,15 +771,22 @@ function renderParts() {
   }).join("");
   document.querySelectorAll("[data-part]").forEach((ta) => {
     ta.value = state.draft[+ta.dataset.part][+ta.dataset.line] || "";
-    ta.readOnly = !canEdit(3); grow(ta);
+    ta.readOnly = !canEdit(3); grow(ta); seedField(ta);
   });
+}
+// 칸에 이미 들어 있는 글을 "새로 입력한 것"으로 오해하지 않도록 기준값을 심습니다.
+// 이것을 빼먹으면 새로고침 뒤 첫 글자에 "대량 입력"과 "한글 입력"이 잘못 기록됩니다.
+function seedField(el) {
+  if (!el) return;
+  el.dataset.len = el.value.length;
+  hangulFlag[el.id || (el.dataset.part + ":" + el.dataset.line)] = HANGUL.test(el.value);
 }
 
 function fillFields() {
   document.querySelectorAll("[data-step1]").forEach((el) => { el.value = state.step1[+el.dataset.step1] || ""; el.readOnly = !canEdit(1); });
   document.querySelectorAll("[data-step2]").forEach((el) => { el.value = state.step2[+el.dataset.step2] || ""; el.readOnly = !canEdit(2); grow(el); });
   renderParts();
-  const f = $("final"); f.value = state.final || ""; f.readOnly = !canEdit(4); grow(f);
+  const f = $("final"); f.value = state.final || ""; f.readOnly = !canEdit(4); grow(f); seedField(f);
   $("who").textContent = state.sid + " " + state.name;
   $("sheet").classList.toggle("locked", locked);
   document.querySelectorAll("[data-add]").forEach((b) => { b.disabled = !canEdit(3); });
@@ -792,8 +796,11 @@ function fillFields() {
 function draftText() {
   return state.draft.map((part) => part.map((s) => s.trim()).filter(Boolean).join(" ")).filter(Boolean).join("\n\n");
 }
+// 문장 수는 화면 위쪽 통계·9칸 막대·제출 창·선생님 시트가 모두 같은 숫자를 써야 합니다.
+// 예전에는 이 함수만 "빈 줄이 아닌 칸의 개수"를 세서, 한 칸에 두 문장을 쓴 학생에게
+// 위쪽은 9문장, 제출 창은 7문장으로 다르게 보였습니다.
 function draftSentenceCount() {
-  return state.draft.reduce((a, part) => a + part.filter((s) => /[A-Za-z]{2,}/.test(s)).length, 0);
+  return splitSentences(draftText()).length;
 }
 
 function refresh() {
@@ -809,7 +816,7 @@ function refresh() {
   stS.className = "stat" + (nS >= CONFIG.requiredSentences ? " ok" : "");
   stE.className = "stat" + (nE >= CONFIG.requiredExpressions ? " ok" : "");
   const stL = $("stLeave");
-  stL.hidden = state.leaves.length === 0; stL.firstChild.textContent = state.leaves.length;
+  stL.hidden = leaveCount() === 0; stL.firstChild.textContent = leaveCount();
   stL.className = "stat alert";
 
   // 칩, 미터
@@ -823,7 +830,7 @@ function refresh() {
   CONFIG.step3Parts.forEach((p, pi) => {
     const c = document.querySelector('[data-count="' + pi + '"]');
     if (!c) return;
-    const k = state.draft[pi].filter((s) => /[A-Za-z]{2,}/.test(s)).length;
+    const k = splitSentences(state.draft[pi].join(" ")).length;   // 총 문장 수와 같은 방식으로 셉니다
     const noPeriod = state.draft[pi].some((s) => /[A-Za-z]{2,}/.test(s) && !/[.!?]["')\]]*\s*$/.test(s));
     c.textContent = k + " / " + p.min + (noPeriod ? "  ·  마침표 확인" : "");
     c.className = "count" + (noPeriod ? " warn" : k >= p.min ? " ok" : "");
@@ -846,7 +853,7 @@ function refresh() {
 
   // 기록
   $("log").innerHTML =
-    '<div class="' + (state.leaves.length ? "bad" : "") + '">화면 이탈 <b>' + state.leaves.length + "</b>회</div>" +
+    '<div class="' + (leaveCount() ? "bad" : "") + '">화면 이탈 <b>' + leaveCount() + "</b>회</div>" +
     '<div class="' + (state.hangul ? "bad" : "") + '">영어 칸 한글 입력 <b>' + state.hangul + "</b>회</div>" +
     '<div class="' + (state.bursts ? "bad" : "") + '">대량 입력 <b>' + state.bursts + "</b>회</div>" +
     '<div class="' + (state.autoText ? "bad" : "") + '">자동완성 차단 <b>' + state.autoText + "</b>회</div>" +
@@ -872,9 +879,12 @@ function getKey(sid) { try { return localStorage.getItem("czkey:" + sid) || ""; 
 function setKey(sid, key) { try { if (key) localStorage.setItem("czkey:" + sid, key); } catch (e) {} }
 let dupWarned = false;
 let lastCheck = null;          // 마지막 저장 확인 응답 (PDF 링크 포함)
-let serverInfo = null;         // 로그인 때 서버가 준 정보
 let dirty = false;             // 마지막 서버 저장 이후 바뀐 것이 있는지
 let autosaveTimer = null;
+let noKeyWarned = false;       // 열쇠 없이 쓰고 있다는 경고를 이미 띄웠는지
+let saveVerified = false;      // 이 시간 첫 자동 저장을 서버에서 확인했는지
+let brokenWarned = false;      // 서버에 저장된 상태를 읽지 못했는지
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function phaseAllows(step) {
   const ph = state.phase;
   if (ph === "research") return step === 1 || step === 2;
@@ -890,6 +900,8 @@ function phaseMinutes() {
 }
 
 function markDirty() { dirty = true; }
+// 이탈 총 횟수. 목록은 300건까지만 보관하므로 버린 개수를 함께 셉니다.
+function leaveCount() { return state.leaves.length + (state.leavesDropped || 0); }
 function applyPhase() {
   const ph = state.phase;
   $("step4").hidden = !(ph === "final" || ph === "done");
@@ -976,6 +988,19 @@ function noteEvent(kind) {
   const last = state.leaves[state.leaves.length - 1];
   if (last && now - last.t < 1500 && fam(last.k) === fam(kind)) return;
   state.leaves.push({ t: now, k: kind, p: state.phase });
+  // 상태(JSON)가 서버 칸(45000자)을 넘으면 다음 로그인 때 읽을 수 없게 됩니다.
+  // 이탈 기록이 유일하게 끝없이 늘어나는 항목이라 여기서 개수를 제한합니다.
+  // 앞부분(언제 시작했는지)과 뒷부분(최근)을 남기고 가운데를 버립니다. 총 횟수는 state.leavesDropped 에 셉니다.
+  const LEAVE_MAX = 300;
+  if (state.leaves.length > LEAVE_MAX) {
+    const keepHead = 50;
+    const removed = state.leaves.length - LEAVE_MAX;
+    state.leaves.splice(keepHead, removed);
+    state.leavesDropped = (state.leavesDropped || 0) + removed;
+  }
+  // 이탈 기록은 서버에도 올라가야 합니다. markDirty() 를 빼면 학생이 앱만 여러 번 옮겨 다니고
+  // 글을 더 쓰지 않은 경우, 다음 자동 저장이 "바뀐 것 없음"으로 건너뛰어 기록이 남지 않습니다.
+  markDirty();
   refresh(); save();
 }
 document.addEventListener("visibilitychange", () => { if (document.hidden) noteEvent("hidden"); });
@@ -1050,7 +1075,7 @@ document.addEventListener("selectionchange", () => {
   if (!HANGUL.test(sel)) return;
   const end = el.selectionEnd;
   try { el.setSelectionRange(end, end); } catch (e) {}
-  state.hangulSel++; refresh(); scheduleSave();
+  state.hangulSel++; markDirty(); refresh(); scheduleSave();
   toast("한글은 선택할 수 없습니다. 영어로 작성하세요.");
 });
 
@@ -1087,7 +1112,9 @@ function timeUp() {
     if (CONFIG.autoSubmitWhenTimeUp) submitNow("시간 종료 자동 제출");
   }
 }
-function setLocked(v) { locked = v; if (v) setFsLost(false); fillFields(); refresh(); }
+// applyPhase() 를 함께 불러야 사전 버튼 같은 것이 다시 계산됩니다.
+// 예전에는 잠긴 뒤에도 사전 버튼이 남아 있고, 눌러도 아무 일이 없었습니다.
+function setLocked(v) { locked = v; if (v) setFsLost(false); applyPhase(); }   // applyPhase() 가 fillFields()·refresh() 까지 합니다
 function showBanner(msg, danger) {
   const b = $("banner"); b.textContent = msg; b.hidden = false; b.className = "banner" + (danger ? " danger" : "");
 }
@@ -1095,7 +1122,10 @@ function setPhase(ph) {
   const prev = state.phase;
   if (prev && state.phaseStartedAt) state.phaseLog[prev + "End"] = Date.now();
   state.phase = ph; state.phaseStartedAt = Date.now(); state.extraSec = 0;
-  state.phaseLog[ph + "Start"] = Date.now();
+  // 같은 단계로 다시 들어오는 경우(교사가 "제출 취소"로 되돌릴 때)에는 시작 시각을 덮어쓰지 않습니다.
+  // 덮어쓰면 끝난 시각이 시작보다 앞서서 소요 시간이 음수("초안 -18분")로 기록됩니다.
+  if (!state.phaseLog[ph + "Start"]) state.phaseLog[ph + "Start"] = Date.now();
+  else delete state.phaseLog[ph + "End"];
 }
 
 // ---------- 단계 전환 ----------
@@ -1137,14 +1167,20 @@ function buildMeta(reason, kind) {
   const dCount = draftSentenceCount();
   const dUsed = usedExpressions(draftText()).length;
   const L = state.phaseLog || {};
-  const leaves = state.leaves.map((l) => fmtClock(new Date(l.t)).slice(0, 5) + " " + (EVENT_LABEL[l.k] || l.k) + (l.p === "final" ? "(최종)" : "(초안)")).join(", ");
+  // 목록이 길어지면 자동집계가 서버의 4000자 한도를 넘어 뒤쪽(소요 시간·제출 시각)이 잘립니다.
+  // 그래서 앞 40개만 적고 나머지는 개수로 줄입니다.
+  const LMAX = 40;
+  const shown = state.leaves.slice(0, LMAX);
+  const leaves = shown.map((l) => fmtClock(new Date(l.t)).slice(0, 5) + " " + (EVENT_LABEL[l.k] || l.k) + (l.p === "final" ? "(최종)" : "(초안)")).join(", ")
+    + (state.leaves.length > LMAX ? " 외 " + (state.leaves.length - LMAX) + "건" : "");
   const parts = [];
   if (kind === "final") parts.push("최종 문장 " + a.sentences.length, "표현 " + a.used.length + "/" + BANK.length + (a.used.length ? " (" + a.used.map((i) => BANK[i].label).join(", ") + ")" : ""));
   parts.push("초안 문장 " + dCount + " (표현 " + dUsed + ")");
-  parts.push("화면이탈 " + state.leaves.length + "회" + (leaves ? " [" + leaves + "]" : ""));
+  parts.push("화면이탈 " + leaveCount() + "회" + (leaves ? " [" + leaves + "]" : ""));
   parts.push("한글입력 " + state.hangul + "회", "한글선택 " + state.hangulSel + "회", "대량입력 " + state.bursts + "회");
   const lk = state.lookups || [];
-  parts.push("사전 " + lk.length + "회" + (lk.length ? " [" + lk.map((l) => l.q + "→" + l.a).join(", ") + "]" : ""));
+  const lkShown = lk.slice(0, 60);
+  parts.push("사전 " + lk.length + "회" + (lk.length ? " [" + lkShown.map((l) => l.q + "→" + l.a).join(", ") + (lk.length > 60 ? " 외 " + (lk.length - 60) + "건" : "") + "]" : ""));
   parts.push("자동완성차단 " + (state.autoText || 0) + "회");
   parts.push("환경 " + (ENV.standalone ? "홈화면앱" : "브라우저") + (state.fsNote ? "(" + state.fsNote + ")" : ""));
   parts.push("소요 조사 " + mins(L.researchStart, L.researchEnd) + " / 초안 " + mins(L.draftStart, L.draftEnd) + " / 최종 " + mins(L.finalStart, L.finalEnd));
@@ -1204,6 +1240,8 @@ function jsonp(params, timeoutMs) {
 async function postToServer(kind, reason) {
   const cfg = CONFIG.submit;
   if (!cfg.scriptUrl) return null;
+  // 기기 열쇠가 없으면 서버는 어떤 저장도 받지 않습니다(NO_KEY). 보내 봐야 버려지므로 실패로 알립니다.
+  if (!getKey(state.sid)) { warnNoKey(); return false; }
   const body = new URLSearchParams();
   body.append("token", cfg.token || ""); body.append("phase", kind); body.append("key", getKey(state.sid));
   body.append("sid", state.sid); body.append("name", state.name);
@@ -1213,15 +1251,20 @@ async function postToServer(kind, reason) {
   body.append("bank", JSON.stringify(BANK.map((w) => ({ label: w.label, source: w.re.source, flags: w.re.flags }))));
   body.append("data", JSON.stringify(state));
   await fetch(cfg.scriptUrl, { method: "POST", mode: "no-cors", body, keepalive: true });
-  // 저장 확인 (읽어서 시각 비교)
+  // 저장 확인. 서버가 돌려주는 draftAt 은 [초안제출시각] 칸이라 제출이 실제로 기록되었을 때만 값이 있습니다.
+  // (예전에는 [저장시각]을 봤기 때문에 1분마다 도는 자동 저장 덕분에 제출이 실패해도 성공으로 보였습니다.)
+  // 시각이 오래되었으면(= 지난번 제출) 실패로 봅니다. 초안은 서버가 기록한 단계까지 함께 확인합니다.
   try {
     const r = await jsonp({ action: "check", sid: state.sid, name: state.name }, 8000);
-    const at = kind === "draft" ? r.draftAt : r.finalAt;
     lastCheck = r;
-    return !!(at && Date.now() - new Date(at).getTime() < 3 * 60 * 1000);
+    const at = kind === "draft" ? r.draftAt : r.finalAt;
+    if (!at) return false;
+    if (Date.now() - new Date(at).getTime() >= 3 * 60 * 1000) return false;
+    if (kind === "draft" && (ORDER[r.phase] || 0) < ORDER.draftDone) return false;
+    return true;
   } catch (e) { return null; }
 }
-// 로그인: 서버에 저장된 상태를 가져온다. { found, data, finalAt, finalOpen, reason }
+// 로그인: 서버에 저장된 상태를 가져온다. { data, phase, finalAt, error, dup, name }
 async function fetchRemote(sid, name) {
   const r = await jsonp({ action: "load", sid, name, key: getKey(sid) }, 8000);
   if (!r) return null;
@@ -1232,7 +1275,12 @@ async function fetchRemote(sid, name) {
     try { data = typeof r.data === "string" ? JSON.parse(r.data) : r.data; } catch (e) { data = null; }
     if (data && String(data.sid) !== String(sid)) data = null;
   }
-  return { data, finalAt: r.finalAt || null, reason: r.reason || "", error: r.error || "", dup: !!r.dup, name: r.name || "" };
+  // 서버의 [단계] 칸이 더 앞서 있으면 그것을 따른다.
+  // (데이터 칸이 비었거나 읽을 수 없을 때 학생을 처음 단계로 되돌려 보내지 않기 위해)
+  const srvPhase = String(r.phase || "");
+  if (data && srvPhase && (ORDER[srvPhase] || 0) > (ORDER[data.phase] || 0)) data.phase = srvPhase;
+  return { data, phase: srvPhase, dataBroken: !!(r.found && r.data && !data),
+           finalAt: r.finalAt || null, error: r.error || "", dup: !!r.dup, name: r.name || "" };
 }
 
 // 작성 중 자동 저장 (서버). 바뀐 것이 있을 때만 보낸다.
@@ -1240,6 +1288,9 @@ async function autosaveToServer(force) {
   const cfg = CONFIG.submit;
   if (!cfg.scriptUrl || !state.sid) return;
   if (!(state.phase in { research: 1, draft: 1, final: 1 })) return;
+  // 열쇠가 없으면 서버가 저장을 받지 않습니다(NO_KEY). 바뀐 것이 없어도 매번 확인해서
+  // 학생이 모르는 채로 계속 쓰지 않도록 바로 알립니다.
+  if (!getKey(state.sid)) { warnNoKey(); return; }
   if (!dirty && !force) return;
   dirty = false;
   try {
@@ -1250,7 +1301,37 @@ async function autosaveToServer(force) {
     body.append("brainstorm", buildBrainstorm()); body.append("draft", buildDraft()); body.append("final", state.final);
     body.append("data", JSON.stringify(state));
     await fetch(cfg.scriptUrl, { method: "POST", mode: "no-cors", body, keepalive: true });
+    // 이 시간 첫 저장은 한 번 확인합니다. 토큰이 안 맞거나 열쇠가 틀리면 20분 동안 모르고 쓰게 되기 때문입니다.
+    if (!saveVerified) {
+      saveVerified = true;
+      try {
+        const r = await jsonp({ action: "check", sid: state.sid, name: state.name }, 8000);
+        if (!r || r.error || (!r.savedAt && !r.draftAt && !r.finalAt)) {
+          showBanner("선생님 서버에 저장된 것이 확인되지 않습니다. 글은 이 아이패드에 남아 있습니다. 선생님께 알려 주세요.", true);
+        }
+      } catch (e) {}
+    }
   } catch (e) { dirty = true; }
+}
+// 교사가 "제출 취소"로 단계를 되돌렸을 때 서버에도 알립니다.
+async function reopenOnServer(to) {
+  const cfg = CONFIG.submit;
+  if (!cfg.scriptUrl || !state.sid || !getKey(state.sid)) return;
+  try {
+    const body = new URLSearchParams();
+    body.append("token", cfg.token || ""); body.append("phase", "reopen"); body.append("to", to);
+    body.append("key", getKey(state.sid)); body.append("sid", state.sid); body.append("name", state.name);
+    body.append("meta", "교사 제출 취소 → " + (PHASE_LABEL[to] || to) + " | 초안 문장 " + draftSentenceCount());
+    body.append("brainstorm", buildBrainstorm()); body.append("draft", buildDraft()); body.append("final", state.final);
+    body.append("data", JSON.stringify(state));
+    await fetch(cfg.scriptUrl, { method: "POST", mode: "no-cors", body, keepalive: true });
+  } catch (e) {}
+}
+// 서버가 저장을 받지 않는 상태(열쇠 없음)를 학생에게 한 번만 알립니다.
+function warnNoKey() {
+  if (noKeyWarned) return;
+  noKeyWarned = true;
+  showBanner("선생님 서버와 연결되지 않았습니다. 지금 쓰는 글은 이 아이패드에만 저장됩니다. 선생님께 알려 주세요.", true);
 }
 function startAutosave() {
   clearInterval(autosaveTimer);
@@ -1318,7 +1399,32 @@ async function submitNow(reason) {
     setDoneStatus("제출이 저장되었습니다. 이 화면을 선생님께 보여 주거나, 아래 버튼으로 복사·저장하세요.", false);
   }
 }
-function setDoneStatus(msg, bad) { const s = $("doneStatus"); s.textContent = msg; s.className = "done-status" + (bad ? " bad" : ""); }
+function setDoneStatus(msg, bad) {
+  const s = $("doneStatus"); s.textContent = msg; s.className = "done-status" + (bad ? " bad" : "");
+  // 전송이 확인되지 않았을 때만 "다시 보내기"를 보여 줍니다.
+  const r = $("retryBtn");
+  if (r) r.hidden = !bad;
+}
+// 제출은 이미 끝났지만 전송이 확인되지 않았을 때 다시 시도합니다.
+// 예전에는 이 버튼이 없어서, 제출이 몰려 전송이 실패하면 학생이 할 수 있는 일이 없었습니다.
+let retrying = false;
+async function retrySend() {
+  if (retrying) return;
+  const kind = state.submitted || state.phase === "done" ? "final" : "draft";
+  const reason = (kind === "final" ? state.submitReason : state.draftReason) || "다시 보내기";
+  retrying = true; $("retryBtn").disabled = true;
+  setDoneStatus("다시 보내는 중입니다…", false);
+  try {
+    const ok = await postToServer(kind, reason);
+    if (kind === "final") state.sent = ok; else state.draftSent = ok;
+    save();
+    if (ok === true) setDoneStatus(kind === "final" ? "선생님께 전송했습니다. (" + fmtClock(new Date()) + ")" : "초안이 선생님 드라이브에 저장되었습니다.", false);
+    else if (ok === false) setDoneStatus("아직 확인되지 않았습니다. 잠시 뒤 다시 눌러 보고, 안 되면 아래 버튼으로 복사·저장하고 선생님께 알려 주세요.", true);
+    else setDoneStatus("보냈지만 확인은 되지 않았습니다. 선생님께 화면을 보여 주세요.", false);
+  } catch (e) {
+    setDoneStatus("다시 보내지 못했습니다. 아래 버튼으로 복사·저장하고 선생님께 알려 주세요.", true);
+  } finally { retrying = false; $("retryBtn").disabled = false; }
+}
 
 function showDone(kind) {
   $("app").hidden = true; $("gate").hidden = true; $("done").hidden = false;
@@ -1331,10 +1437,12 @@ function showDone(kind) {
   $("copyBtn").textContent = isDraft ? "초안 복사" : "최종본 복사";
   const text = isDraft ? draftText() : state.final;
   const a = analyze(text);
+  // 제출 시각이 없으면(예: 교사가 초안 없이 최종만 진행) 09:00 처럼 엉뚱한 시각이 찍히므로 "-" 로 둡니다.
+  const stampAt = isDraft ? state.draftSubmittedAt : state.submittedAt;
   const rows = [["학번", state.sid], ["이름", state.name],
-    [isDraft ? "1회차 제출" : "제출 시각", fmtClock(new Date(isDraft ? state.draftSubmittedAt : state.submittedAt)).slice(0, 5)],
+    [isDraft ? "1회차 제출" : "제출 시각", stampAt ? fmtClock(new Date(stampAt)).slice(0, 5) : "-"],
     [isDraft ? "초안 문장" : "문장 수", a.sentences.length], ["표현", a.used.length + "/" + BANK.length],
-    ["화면 이탈", state.leaves.length + "회", state.leaves.length > 0],
+    ["화면 이탈", leaveCount() + "회", leaveCount() > 0],
     ["한글 입력", state.hangul + "회", state.hangul > 0],
     ["한글 선택", state.hangulSel + "회", state.hangulSel > 0],
     ["사전 조회", (state.lookups || []).length + "회"]];
@@ -1352,7 +1460,9 @@ function fullText() {
     buildBrainstorm() + "\n\n[Step 3 초안]\n" + buildDraft() + "\n\n[Step 4 최종본]\n" + state.final + "\n\n[자동 집계]\n" + buildMeta(state.submitReason || "", state.submitted ? "final" : "draft");
 }
 async function copyFinal() {
-  const text = state.phase === "draftDone" ? draftText() : state.final;
+  // 버튼 이름과 실제로 복사되는 내용이 어긋나지 않게, 초안 화면에서는 초안을 복사합니다.
+  const isDraftView = state.phase === "draftDone" || state.phase === "draft";
+  const text = isDraftView ? draftText() : state.final;
   try { await navigator.clipboard.writeText(text); toast("복사했습니다."); }
   catch (e) {
     const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select();
@@ -1480,6 +1590,9 @@ async function teacherMenu() {
       if (state.phase === "done") { state.submitted = false; state.sent = null; state.submitReason = ""; setPhase("final"); state.extraSec = 300; }
       else { state.draftSent = null; state.draftSubmittedAt = 0; setPhase("draft"); state.extraSec = 300; }
       save(); $("done").hidden = true; $("banner").hidden = true;
+      // 서버에도 단계를 되돌린다고 알립니다. 알리지 않으면 서버가 "이미 제출됨"으로 알고 있어서
+      // 다시 쓴 글의 단계가 시트에 반영되지 않습니다.
+      await reopenOnServer(state.phase);
       enterApp(); toast("다시 열었습니다. 5분이 주어집니다.");
     }
     else if (c.value === "finalOnly") {
@@ -1492,12 +1605,18 @@ async function teacherMenu() {
       if (!state.startedAt) newState(state.sid, state.name);
       state.submitted = false; state.sent = null; state.draftSubmittedAt = 0; state.draftSent = null;
       setPhase("research"); save();
+      await reopenOnServer("research");
       enterApp();
     }
     else if (c.value === "wipe") {
-      const ok = await dialog({ title: "데이터 삭제", text: who + " 학생의 이 기기 저장 데이터를 지우고 처음부터 다시 시작합니다. (선생님 드라이브의 초안은 지워지지 않습니다.)",
+      const ok = await dialog({ title: "데이터 삭제", text: who + " 학생의 이 기기 저장 데이터를 지우고 처음부터 다시 시작합니다. 다음 로그인은 새 줄로 등록되어 시트에 \"중복\"으로 표시됩니다. (선생님 드라이브의 초안은 지워지지 않습니다.)",
         buttons: [{ label: "취소", value: null }, { label: "삭제", value: "yes", primary: true }] });
-      if (ok.value === "yes") { localStorage.removeItem(storageKey()); location.reload(); }
+      // 기기 열쇠까지 지워야 정말 처음부터 시작합니다. 열쇠를 남기면 다음 로그인 때 서버가 같은 상태를 그대로 돌려줍니다.
+      if (ok.value === "yes") {
+        try { localStorage.removeItem(storageKey()); } catch (e) {}
+        try { localStorage.removeItem("czkey:" + state.sid); } catch (e) {}
+        location.reload();
+      }
     }
   } finally { suppressLeaveUntil = Date.now() + 1500; }
 }
@@ -1511,7 +1630,8 @@ function newState(sid, name) {
   state.final = ""; state.leaves = []; state.hangul = 0; state.bursts = 0; state.hangulSel = 0;
   state.submitted = false; state.submittedAt = 0; state.submitReason = ""; state.sent = null;
   state.phase = "research"; state.phaseStartedAt = 0; state.phaseLog = {}; state.savedAt = 0;
-  state.draftSubmittedAt = 0; state.draftReason = ""; state.draftSent = null; state.allowFullFlow = false; state.fsNote = ""; state.lookups = []; state.autoText = 0;
+  state.draftSubmittedAt = 0; state.draftReason = ""; state.draftSent = null; state.fsNote = ""; state.lookups = []; state.autoText = 0;
+  state.leavesDropped = 0; state.title = CONFIG.title; state.subtitle = CONFIG.subtitle;
 }
 function restoreState(saved) {
   Object.assign(state, saved);
@@ -1523,6 +1643,8 @@ function restoreState(saved) {
     return arr;
   });
   state.leaves = state.leaves || []; state.hangulSel = state.hangulSel || 0; state.lookups = state.lookups || []; state.autoText = state.autoText || 0;
+  state.leavesDropped = state.leavesDropped || 0;
+  state.title = CONFIG.title; state.subtitle = CONFIG.subtitle;   // 설정을 바꿨으면 항상 현재 제목을 쓴다
   state.phase = state.phase || (state.submitted ? "done" : "research");
   state.phaseLog = state.phaseLog || {};
 }
@@ -1530,16 +1652,15 @@ function restoreState(saved) {
 function enterApp() {
   $("gate").hidden = true; $("done").hidden = true; $("app").hidden = false;
   locked = false;
-  document.querySelectorAll("[data-part], #final").forEach((el) => {
-    el.dataset.len = el.value.length;
-    hangulFlag[el.id || (el.dataset.part + ":" + el.dataset.line)] = HANGUL.test(el.value);
-  });
   applyPhase(); save(); startTick(); ensureFsSoon(); startAutosave(); dirty = true;
-  if (dupWarned) showBanner("이 학번은 이미 다른 기기에서 사용 중입니다. 내 글은 따로 저장되지만, 선생님께 꼭 알려 주세요.", true);
+  // 글자 수·한글 기준값은 칸을 채운 뒤에 심어야 합니다. applyPhase() 안에서 칸이 새로 만들어지기 때문입니다.
+  document.querySelectorAll("[data-part], #final").forEach(seedField);
+  if (brokenWarned) showBanner("선생님 서버에 저장된 내용을 읽지 못했습니다. 선생님께 꼭 알려 주세요.", true);
+  else if (dupWarned) showBanner("이 학번은 이미 다른 기기에서 사용 중입니다. 내 글은 따로 저장되지만, 선생님께 꼭 알려 주세요.", true);
   window.scrollTo(0, 0);
 }
 function beginFinal() {
-  if (state.phase !== "final") { setPhase("final"); save(); }
+  if (state.phase !== "final") { setPhase("final"); save(); markDirty(); autosaveToServer(true); }
   enterApp();
   const y = $("step4").getBoundingClientRect().top + window.scrollY - 80;
   setTimeout(() => window.scrollTo({ top: y, behavior: "smooth" }), 200);
@@ -1555,15 +1676,30 @@ async function start() {
   const local = load(sid);
   let remote = null, serverOk = false;
   if (CONFIG.submit.scriptUrl) {
-    try { remote = await fetchRemote(sid, name); serverOk = !!remote && !remote.error; } catch (e) { remote = null; }
+    // 30명이 한꺼번에 로그인하면 서버가 늦어 한 번에 실패할 수 있습니다. 세 번까지 다시 시도합니다.
+    for (let i = 0; i < 3 && !serverOk; i++) {
+      if (i) { note.textContent = "서버 응답이 늦습니다. 다시 시도하는 중… (" + (i + 1) + "/3)"; await sleep(600 * i); }
+      try { remote = await fetchRemote(sid, name); serverOk = !!remote && !remote.error; } catch (e) { remote = null; }
+    }
   }
   $("startBtn").disabled = false; note.textContent = "";
 
   // 같은 학번이 이미 다른 기기에 등록되어 있으면: 막지 않고 따로 저장하되, 학생과 선생님이 알 수 있게 표시
   dupWarned = !!(remote && remote.dup);
-  if (!serverOk && CONFIG.submit.scriptUrl && !local) {
+
+  // 서버도 안 되고 이 기기에 저장된 것도 없으면, 조용히 처음부터 시작하지 않습니다.
+  // 그대로 들어가면 열쇠가 없어 20분 동안 쓴 글이 서버에 하나도 안 남습니다.
+  if (CONFIG.submit.scriptUrl && !serverOk && !local) {
+    const c = await dialog({ title: "선생님 서버에 연결할 수 없습니다",
+      text: "저장된 내용을 불러오지 못했습니다. 이대로 시작하면 쓴 글이 이 아이패드에만 남습니다. 먼저 선생님께 알리세요.",
+      buttons: [{ label: "다시 시도", value: "retry", primary: true }, { label: "이 기기에만 저장하고 시작", value: "go" }] });
+    if (c.value !== "go") { note.textContent = "다시 시도하세요. 계속 안 되면 선생님께 알리세요."; note.className = "gate-note error"; return; }
+    noKeyWarned = false;
+  }
+  if (CONFIG.submit.scriptUrl && !serverOk && local) {
     note.textContent = "서버에 연결할 수 없어 이 기기의 저장 내용만 사용합니다."; note.className = "gate-note";
   }
+  brokenWarned = !!(remote && remote.dataBroken);
 
   const chosen = pickState(local, remote && remote.data);
   if (chosen) { restoreState(chosen); if (name && name !== state.name) state.name = name; }
@@ -1603,7 +1739,11 @@ function init() {
     if (e.inputType === "insertFromPaste" || e.inputType === "insertFromDrop") { e.preventDefault(); toast("붙여넣기는 사용할 수 없습니다. 직접 입력하세요."); return; }
     // 영어 칸: 자동 수정(단어 교체)과 예측 텍스트 수락(여러 글자가 한 번에 들어옴)을 막고 기록
     if (isWritingField(e.target)) {
-      const multi = e.inputType === "insertText" && typeof e.data === "string" && e.data.length > 1 && !/^\s+$/.test(e.data);
+      // 여러 글자가 한꺼번에 들어오는 것은 예측 텍스트 수락으로 보고 막습니다.
+      // 단, iOS의 "스페이스 두 번 = 마침표" 기능은 ". " 처럼 두 글자로 들어오는 정상 입력이라 막지 않습니다.
+      // 이것을 막으면 그 설정을 켠 학생은 마침표를 아예 찍을 수 없습니다.
+      const multi = e.inputType === "insertText" && typeof e.data === "string" && e.data.length > 1
+        && !/^\s+$/.test(e.data) && !/^[.,!?;:'"()\[\]-]+\s*$/.test(e.data);
       if (e.inputType === "insertReplacementText" || multi) {
         e.preventDefault();
         state.autoText = (state.autoText || 0) + 1; refresh(); scheduleSave(); markDirty();
@@ -1645,6 +1785,7 @@ function init() {
   $("modalOk").addEventListener("click", onModalOk);
   $("copyBtn").addEventListener("click", copyFinal);
   $("saveBtn").addEventListener("click", saveFile);
+  $("retryBtn").addEventListener("click", retrySend);
   ["teacherBtn", "teacherBtn2", "teacherBtn3", "teacherBtn4"].forEach((id) => { const b = $(id); if (b) b.addEventListener("click", teacherMenu); });
   $("fsResume").addEventListener("click", () => {
     requestFs();

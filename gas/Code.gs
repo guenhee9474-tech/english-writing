@@ -41,7 +41,8 @@
  * 학생이 작성하는 동안 1분마다, 그리고 초안을 제출할 때 학생 상태 전체가 "초안" 시트(제출명단 파일의 두 번째 탭)에
  * 저장됩니다. 학생이 같은 학번·이름으로 다시 로그인하면 이 시트의 상태로 이어지므로 다른 아이패드에서도 됩니다.
  *   - 초안 제출 전이면 1회차(조사 → 초안)가 열리고, 초안을 제출했으면 2회차(최종 글쓰기)가 열립니다.
- *   - 학번은 같은데 이름이 다르면 열어 주지 않습니다.
+ *   - 학번은 같은데 이름이 다르면 기존 줄을 넘겨주지 않고 "중복" 표시가 된 새 줄을 만듭니다(두 학생 글이 모두 남습니다).
+ *     시험 중에 못 들어가게 막지는 않습니다. "오류" 탭과 총괄의 [명단 확인] 칸에서 확인하세요.
  * 2회차(최종 제출)에 PDF를 만들고 제출명단에 기록합니다.
  *
  * 단어 사전: 작성 페이지의 "사전" 버튼은 단어 하나만 여기로 보내고, 구글 번역으로 뜻을 받아 갑니다.
@@ -60,7 +61,7 @@ const CFG = {
   folderName: "영어쓰기_수행평가_제출물",        // folderId 를 비워 둘 때만 사용
 
   subfolderByClass: true,                       // true: 학번 앞 세 자리(예: 10315 → "103")로 반별 하위 폴더를 만들어 정리
-  format: "pdf",                                // "pdf" | "docx" | "both"
+  format: "pdf",                                // "pdf" 만 지원합니다. (Word 내보내기는 새 권한 승인이 필요해서 넣지 않았습니다)
 
   logSheet: true,                               // true: 같은 폴더에 "제출명단" 시트를 만들어 한 줄씩 기록
   logSheetName: "제출명단",
@@ -78,6 +79,34 @@ const CFG = {
   token: "gfa2026",                             // 작성 페이지의 CONFIG.submit.token 과 같아야 함
   maxChars: 20000                               // 한 항목당 글자 수 상한 (장난 제출 방지)
 };
+
+/* ────────────────────────── 잠금 · 시트 손잡이 ──────────────────────────
+   30명이 한꺼번에 저장하면 "읽고 → 고쳐서 → 쓰기" 사이에 다른 학생 요청이 끼어들어
+   방금 쓴 내용이 지워질 수 있습니다. 그래서 그 구간은 반드시 잠금을 잡고 들어갑니다.
+   잠금을 못 잡았는데 그냥 진행하면 안 되는 곳(required)은 오류를 내서 제출을 실패로 만들고,
+   학생 화면이 "확인되지 않았습니다"를 보여 주도록 합니다. 조용히 망가지는 것보다 낫습니다. */
+
+function withLock(ms, label, fn, required) {
+  const lock = LockService.getScriptLock();
+  let got = false;
+  try { got = lock.tryLock(ms); } catch (e) { got = false; }
+  if (!got) {
+    if (required) { logError("잠금 실패(" + label + ")", new Error("다른 요청이 " + ms + "ms 안에 끝나지 않았습니다"), ""); throw new Error("BUSY"); }
+    return fn();                                 // 줄을 새로 붙이기만 하는 곳은 잠금 없이도 안전합니다
+  }
+  try { return fn(); } finally { try { lock.releaseLock(); } catch (e) {} }
+}
+
+// 한 번 실행되는 동안 같은 시트를 여러 번 열지 않도록 손잡이를 보관합니다 (제출이 몰릴 때 속도 차이가 큽니다).
+let _sheetCache = {};
+function cachedSheet(name, make) {
+  if (!_sheetCache[name]) _sheetCache[name] = make();
+  return _sheetCache[name];
+}
+// 시트에 학생 글을 쓸 때 "=" 로 시작하는 값이 수식으로 해석되지 않게 합니다.
+function safeCell(v) { const s = String(v == null ? "" : v); return /^[=+\-@]/.test(s) ? "'" + s : s; }
+// 이름 비교용 (공백·대소문자 무시)
+function nameKey(s) { return String(s || "").replace(/\s+/g, "").toLowerCase(); }
 
 /* ────────────────────────── 제출 받기 ────────────────────────── */
 
@@ -99,33 +128,46 @@ function doPost(e) {
       bank: parseBank(p.bank)
     };
     if (!data.key) return textOut("NO_KEY");           // 열쇠 없는 저장은 받지 않음 (로그인 때 발급됨)
-    const row = findRow(draftSheet(), data.sid, data.key);
+    const sh0 = draftSheet();
+    const row = findRow(sh0, data.sid, data.key);
     if (!row) return textOut("UNKNOWN_KEY");
-    data.dup = String(draftSheet().getRange(row, COL.dup).getValue() || "") === "Y";
+    data.dup = String(sh0.getRange(row, COL.dup).getValue() || "") === "Y";
 
     if (p.phase === "save") {                          // 작성 중 자동 저장: 상태 + 읽을 수 있는 텍스트
       saveDraft(data, p.data || "", phaseOf(p.data), "");
       return textOut("OK_SAVE");
     }
+    // 교사 메뉴 "제출 취소 (다시 열기)": 단계만 되돌립니다. 학생이 다시 쓴 글은 이후 자동 저장으로 정상 저장됩니다.
+    if (p.phase === "reopen") {
+      const to = String(p.to || "");
+      if (!PHASE_ORDER.hasOwnProperty(to)) return textOut("BAD_PHASE");
+      saveDraft(data, p.data || "", to, "", { allowRegress: true });
+      return textOut("OK_REOPEN");
+    }
     if (p.bank) { try { PropertiesService.getScriptProperties().setProperty("bank", p.bank); } catch (eb) {} }   // 재생성용
     if (p.phase === "draft") {                         // 1회차 초안 제출: (선택) PDF + 상태 저장
       let link = "";
       if (CFG.draftPdf) {
-        try { link = savePdf(data, "draft").getUrl(); }
+        try { link = savePdf(data, "draft")[0].getUrl(); }
         catch (e0) { logError("초안 PDF", e0, data.sid); link = "PDF 실패: " + String(e0 && e0.message || e0).slice(0, 120); }
       }
-      saveDraft(data, p.data || "", "draftDone", link);
-      try { rebuildOverview(); } catch (e5) {}
+      saveDraft(data, p.data || "", "draftDone", link, { allowRegress: true });
       return textOut("OK_DRAFT");
     }
+    if (p.phase !== "final") return textOut("BAD_PHASE");   // 모르는 단계 값을 최종 제출로 처리하지 않는다
 
-    const files = [savePdf(data, "final")];            // 2회차: PDF + 명단
-    if (CFG.format === "docx" || CFG.format === "both") { try { if (files[0].docx) files.push(files[0].docx); } catch (e4) {} }
-    // 시트 기록이나 메일이 실패해도 파일 저장은 이미 끝났으므로 제출은 성공으로 처리합니다.
-    if (CFG.logSheet) { try { logRow(data, files); } catch (e1) {} }
-    try { saveDraft(data, p.data || "", "done", files[0] ? files[0].getUrl() : ""); } catch (e3) {}
-    if (CFG.notifyEmail) { try { sendMail(data, files); } catch (e2) {} }
-    try { rebuildOverview(); } catch (e5) {}
+    // 최종 단계를 닫아 둔 상태에서 들어온 제출도 받습니다(학생 글을 버리는 것이 더 나쁩니다). 대신 오류 탭에 남겨 둡니다.
+    if (!isFinalOpen()) logError("최종 닫힘 상태에서 최종 제출", new Error("closeFinal 중 제출됨"), data.sid + " " + data.name);
+
+    // 2회차: PDF + 명단. PDF가 실패해도 시트 기록과 상태 저장은 반드시 해서 학생 글이 사라지지 않게 합니다.
+    let files = [];
+    try { files = savePdf(data, "final"); }
+    catch (e0) { logError("최종 PDF", e0, data.sid); files = []; }
+    if (CFG.logSheet) { try { logRow(data, files); } catch (e1) { logError("제출명단 기록", e1, data.sid); } }
+    try { saveDraft(data, p.data || "", "done", files[0] ? files[0].getUrl() : "", { allowRegress: true }); } catch (e3) { logError("최종 상태 저장", e3, data.sid); }
+    if (CFG.notifyEmail) { try { sendMail(data, files); } catch (e2) { logError("메일 보내기", e2, data.sid); } }
+    // 총괄 시트는 여기서 다시 쓰지 않습니다(제출이 몰릴 때 가장 무거운 작업이라 실행 시간 제한을 넘겼습니다).
+    // 5분마다 자동 갱신하려면 편집기에서 installOverviewTrigger 를 한 번 실행하세요.
     return textOut("OK");
   } catch (err) {
     // 실패해도 학생 화면이 멈추지 않도록 항상 응답합니다. 오류는 "오류" 탭(과 설정한 메일)에 남깁니다.
@@ -210,7 +252,8 @@ function phaseOf(json) { try { return String(JSON.parse(json).phase || ""); } ca
 // 초안 시트 열
 const DRAFT_HEADER = ["학번", "이름", "기기열쇠", "등록시각", "저장시각", "단계", "초안 문장수", "자동집계", "브레인스토밍", "초안", "초안 PDF", "데이터(JSON)", "중복", "초안제출시각", "최종제출시각", "최종 PDF"];
 const COL = { sid: 1, name: 2, key: 3, reg: 4, at: 5, phase: 6, count: 7, meta: 8, brain: 9, draft: 10, pdf: 11, json: 12, dup: 13, draftAt: 14, finalAt: 15, finalPdf: 16 };
-function draftSheet() {
+function draftSheet() { return cachedSheet("draft", draftSheetFresh); }
+function draftSheetFresh() {
   const ss = SpreadsheetApp.openById(getLogSheet().getParent().getId());
   let sh = ss.getSheetByName(CFG.draftSheetName);
   if (sh) {
@@ -232,10 +275,15 @@ function allRows(sh) {
   const last = sh.getLastRow();
   return last < 2 ? [] : sh.getRange(2, 1, last - 1, DRAFT_HEADER.length).getValues();
 }
+// 학번·이름·열쇠 칸만 읽습니다 (브레인스토밍·초안·JSON 같은 큰 칸을 건드리지 않아 훨씬 가볍습니다)
+function idRows(sh) {
+  const last = sh.getLastRow();
+  return last < 2 ? [] : sh.getRange(2, 1, last - 1, COL.key).getValues();
+}
 // 학번 + 열쇠가 모두 맞는 줄
 function findRow(sh, sid, key) {
   if (!key) return 0;
-  const rows = allRows(sh);
+  const rows = idRows(sh);
   for (let i = 0; i < rows.length; i++) if (String(rows[i][COL.sid - 1]) === String(sid) && String(rows[i][COL.key - 1]) === String(key)) return i + 2;
   return 0;
 }
@@ -245,55 +293,66 @@ function newKey() { return Utilities.getUuid().replace(/-/g, "").slice(0, 20); }
 function loadOrRegister(sid, name, key) {
   sid = String(sid || "").trim(); name = String(name || "").trim();
   if (!/^\d{3,}$/.test(sid) || !name) return { found: false, error: "BAD_ID" };
-  const lock = LockService.getScriptLock();
-  try { lock.waitLock(20000); } catch (e) {}
-  try {
+  return withLock(30000, "로그인 " + sid, function () {
     const sh = draftSheet();
-    let r = findRow(sh, sid, key);
-    if (r) {
+    const r = findRow(sh, sid, key);
+    if (r) {                                     // 열쇠가 맞는 줄 = 같은 기기. 그 줄을 그대로 이어 준다
       const v = sh.getRange(r, 1, 1, DRAFT_HEADER.length).getValues()[0];
       return { found: !!v[COL.json - 1], data: v[COL.json - 1] || null, at: v[COL.at - 1], phase: v[COL.phase - 1] || "", key: key,
                name: String(v[COL.name - 1] || name), dup: String(v[COL.dup - 1] || "") === "Y" };
     }
-    // 열쇠가 없거나 모르는 열쇠: 이어받을 줄(열쇠 칸이 빈 같은 학번)이 있는지
-    const rows = allRows(sh);
+    // 열쇠가 없거나 모르는 열쇠: 이어받을 줄(열쇠 칸이 빈 같은 학번)이 있는지 본다
+    const ids = idRows(sh);
     const fresh = newKey();
-    for (let i = 0; i < rows.length; i++) {
-      if (String(rows[i][COL.sid - 1]) === String(sid) && !String(rows[i][COL.key - 1] || "")) {
-        const rr = i + 2;
-        sh.getRange(rr, COL.key).setValue(fresh);
-        return { found: !!rows[i][COL.json - 1], data: rows[i][COL.json - 1] || null, at: rows[i][COL.at - 1], phase: rows[i][COL.phase - 1] || "", key: fresh,
-                 name: String(rows[i][COL.name - 1] || name), dup: String(rows[i][COL.dup - 1] || "") === "Y", transferred: true };
-      }
+    let nameBlocked = "";
+    for (let i = 0; i < ids.length; i++) {
+      if (String(ids[i][COL.sid - 1]) !== String(sid) || String(ids[i][COL.key - 1] || "")) continue;
+      const storedName = String(ids[i][COL.name - 1] || "");
+      // 학번은 같은데 이름이 다르면 남의 줄을 넘겨주지 않는다. 막지는 않고 아래에서 새 줄을 만든다
+      // (시험 중에 학생을 못 들어오게 하는 것보다, 두 사람 글을 모두 살리고 "중복"으로 표시하는 것이 안전하다)
+      if (storedName && nameKey(storedName) !== nameKey(name)) { nameBlocked = storedName; continue; }
+      const rr = i + 2;
+      const v = sh.getRange(rr, 1, 1, DRAFT_HEADER.length).getValues()[0];
+      sh.getRange(rr, COL.key).setValue(fresh);
+      return { found: !!v[COL.json - 1], data: v[COL.json - 1] || null, at: v[COL.at - 1], phase: v[COL.phase - 1] || "", key: fresh,
+               name: storedName || name, dup: String(v[COL.dup - 1] || "") === "Y", transferred: true };
     }
     // 새 등록. 같은 학번이 이미 있으면 중복 표시
-    const exists = rows.some((row) => String(row[COL.sid - 1]) === String(sid));
-    const row = [sid, name, fresh, new Date(), new Date(), "research", "", "", "", "", "", "", exists ? "Y" : "", "", "", ""];
-    sh.appendRow(row);
-    return { found: false, key: fresh, name: name, dup: exists };
-  } finally { try { lock.releaseLock(); } catch (e) {} }
+    const exists = ids.some((row) => String(row[COL.sid - 1]) === String(sid));
+    sh.appendRow([sid, name, fresh, new Date(), new Date(), "research", "", "", "", "", "", "", exists ? "Y" : "", "", "", ""]);
+    if (nameBlocked) logError("이름이 달라 새 줄로 등록", new Error("학번 " + sid + ": 시트에는 \"" + nameBlocked + "\", 입력은 \"" + name + "\""), "기존 줄은 그대로 두었습니다");
+    return { found: false, key: fresh, name: name, dup: exists, nameMismatch: !!nameBlocked };
+  }, true);
 }
 
 const PHASE_ORDER = { research: 0, draft: 1, draftDone: 2, final: 3, done: 4 };
-function saveDraft(d, json, phase, pdfLink) {
-  const lock = LockService.getScriptLock();
-  try { lock.waitLock(20000); } catch (e) {}
-  try {
+function saveDraft(d, json, phase, pdfLink, opts) {
+  opts = opts || {};
+  return withLock(30000, "저장 " + d.sid, function () {
     const sh = draftSheet();
     const r = findRow(sh, d.sid, d.key);
     if (!r) return;
     const old = sh.getRange(r, 1, 1, DRAFT_HEADER.length).getValues()[0];
-    // 이미 더 앞선 단계가 저장되어 있으면(예: 초안 제출 뒤에 도착한 늦은 자동 저장) 덮어쓰지 않는다
     const prev = String(old[COL.phase - 1] || "");
-    if ((PHASE_ORDER[prev] || 0) > (PHASE_ORDER[phase] || 0)) return;
+    // 늦게 도착한 자동 저장이 단계를 되돌리지 못하게 합니다. 단, 글은 그대로 저장합니다.
+    // (예전에는 저장 전체를 버렸습니다. 그래서 교사가 "제출 취소"로 되돌린 뒤 다시 쓴 글이 서버에 안 남았습니다.)
+    let ph = phase || "";
+    if (!opts.allowRegress && (PHASE_ORDER[prev] || 0) > (PHASE_ORDER[ph] || 0)) ph = prev;
     const now = new Date();
-    const row = [d.sid, old[COL.name - 1] || d.name, d.key, old[COL.reg - 1] || now, now, phase || "",
-      num(d.meta, /초안 문장 (\d+)/), d.meta, String(d.brainstorm || "").slice(0, 20000), String(d.draft || "").slice(0, 20000),
-      (phase === "draftDone" && pdfLink) ? pdfLink : String(old[COL.pdf - 1] || ""), String(json).slice(0, 45000), old[COL.dup - 1] || "",
+    // 상태(JSON)가 칸 크기를 넘으면 잘라 넣지 않습니다. 자르면 다음 로그인 때 읽을 수 없게 되기 때문에
+    // 이전에 저장된 온전한 값을 그대로 두고 오류 탭에 남깁니다.
+    let js = String(json == null ? "" : json);
+    if (js.length > 45000) {
+      logError("상태(JSON)가 너무 커서 저장하지 않음", new Error("길이 " + js.length + " (상한 45000)"), d.sid);
+      js = String(old[COL.json - 1] || "");
+    }
+    const row = [d.sid, old[COL.name - 1] || d.name, d.key, old[COL.reg - 1] || now, now, ph,
+      num(d.meta, /초안 문장 (\d+)/), safeCell(d.meta), safeCell(String(d.brainstorm || "").slice(0, 20000)), safeCell(String(d.draft || "").slice(0, 20000)),
+      (phase === "draftDone" && pdfLink) ? pdfLink : String(old[COL.pdf - 1] || ""), js, old[COL.dup - 1] || "",
       phase === "draftDone" ? now : (old[COL.draftAt - 1] || ""), phase === "done" ? now : (old[COL.finalAt - 1] || ""),
       (phase === "done" && pdfLink) ? pdfLink : String(old[COL.finalPdf - 1] || "")];
     sh.getRange(r, 1, 1, row.length).setValues([row]);
-  } finally { try { lock.releaseLock(); } catch (e) {} }
+  }, true);
 }
 function readDraft(sid, key) {
   const sh = draftSheet();
@@ -302,21 +361,32 @@ function readDraft(sid, key) {
   const v = sh.getRange(r, 1, 1, DRAFT_HEADER.length).getValues()[0];
   return { found: !!v[COL.json - 1], data: v[COL.json - 1], at: v[COL.at - 1], phase: v[COL.phase - 1] || "" };
 }
+// 학생 화면이 "정말 저장됐나?"를 확인할 때 쓰는 값들.
+// draftAt 은 반드시 [초안제출시각] 칸이어야 합니다. [저장시각]을 돌려주면 1분마다 도는 자동 저장 때문에
+// 초안 제출이 실패했는데도 항상 "저장되었습니다"가 나옵니다.
 function checkStatus(sid, key) {
-  const out = { draftAt: null, finalAt: null, draftPdf: "", finalPdf: "" };
+  const out = { draftAt: null, finalAt: null, draftPdf: "", finalPdf: "", phase: "", savedAt: null };
+  if (!String(key || "")) return out;            // 열쇠가 없으면 확인해 주지 않는다 (같은 학번인 남의 줄이 잡힐 수 있다)
   try {
     const sh = draftSheet(); const r = findRow(sh, sid, key);
-    if (r) { const v = sh.getRange(r, 1, 1, DRAFT_HEADER.length).getValues()[0]; if (v[COL.json - 1]) out.draftAt = v[COL.at - 1]; out.draftPdf = String(v[COL.pdf - 1] || ""); out.finalPdf = String(v[COL.finalPdf - 1] || ""); }
-  } catch (e) {}
+    if (r) {
+      const v = sh.getRange(r, 1, 1, DRAFT_HEADER.length).getValues()[0];
+      out.draftAt = v[COL.draftAt - 1] || null;
+      out.savedAt = v[COL.at - 1] || null;
+      out.phase = String(v[COL.phase - 1] || "");
+      out.draftPdf = String(v[COL.pdf - 1] || "");
+      out.finalPdf = String(v[COL.finalPdf - 1] || "");
+    }
+  } catch (e) { logError("상태 확인(초안 시트)", e, sid); }
   try {
     const sh = getLogSheet();
     const last = sh.getLastRow();
     if (last >= 2) {
       const rows = sh.getRange(2, 1, last - 1, 11).getValues();
-      const kp = String(key || "").slice(0, 6);
-      for (let i = rows.length - 1; i >= 0; i--) if (String(rows[i][1]) === String(sid) && (!kp || String(rows[i][10] || "") === kp)) { out.finalAt = rows[i][0]; break; }
+      const kp = String(key).slice(0, 6);
+      for (let i = rows.length - 1; i >= 0; i--) if (String(rows[i][1]) === String(sid) && String(rows[i][10] || "") === kp) { out.finalAt = rows[i][0]; break; }
     }
-  } catch (e) {}
+  } catch (e) { logError("상태 확인(제출명단)", e, sid); }
   return out;
 }
 
@@ -324,7 +394,7 @@ function checkStatus(sid, key) {
 
 const C_INK = "#1B2436", C_MUTED = "#5D6675", C_LINE = "#D8DEE7", C_BG = "#F2F4F7", C_MARK = "#FFE58A", C_ACCENT = "#0E7C66", C_DANGER = "#B42318";
 
-// kind: "final" | "draft"
+// kind: "final" | "draft"  →  만들어진 파일 목록을 돌려줍니다 (지금은 PDF 한 개)
 function savePdf(d, kind) {
   const isFinal = kind === "final";
   const base = targetFolder(d.sid);
@@ -381,11 +451,8 @@ function savePdf(d, kind) {
   doc.saveAndClose();
   const docFile = DriveApp.getFileById(doc.getId());
   const pdf = folder.createFile(docFile.getAs("application/pdf").setName(name + ".pdf"));
-  if (isFinal && (CFG.format === "docx" || CFG.format === "both")) {
-    try { pdf.docx = folder.createFile(exportDocx(doc.getId(), name)); } catch (e) {}
-  }
   docFile.setTrashed(true);
-  return pdf;
+  return [pdf];
 }
 
 // ---- 문서 조각 ----
@@ -513,14 +580,11 @@ function matchRanges(text, bank) {
 
 function baseFolder() {
   if (CFG.folderId) return DriveApp.getFolderById(CFG.folderId);
-  const lock = LockService.getScriptLock();
-  try { lock.waitLock(10000); } catch (e) {}
-  try {
+  // 잠금을 못 잡아도 진행합니다. 최악의 경우 같은 이름 폴더가 하나 더 생기는 것이고, 글이 사라지지는 않습니다.
+  return withLock(20000, "기본 폴더", function () {
     const it = DriveApp.getFoldersByName(CFG.folderName);
     return it.hasNext() ? it.next() : DriveApp.createFolder(CFG.folderName);
-  } finally {
-    try { lock.releaseLock(); } catch (e) {}
-  }
+  }, false);
 }
 
 // 학번 앞 세 자리로 반별 하위 폴더 (10315 → "103")
@@ -530,37 +594,31 @@ function targetFolder(sid) {
   const m = String(sid).match(/^\d{3}/);
   if (!m) return base;
   const name = m[0] + "반";
-  const lock = LockService.getScriptLock();
-  try { lock.waitLock(10000); } catch (e) {}
-  try {
+  return withLock(20000, "반 폴더 " + name, function () {
     const it = base.getFoldersByName(name);
     return it.hasNext() ? it.next() : base.createFolder(name);
-  } finally {
-    try { lock.releaseLock(); } catch (e) {}
-  }
+  }, false);
 }
 
 /* ────────────────────────── 제출 명단 시트 ────────────────────────── */
 
 function logRow(d, files) {
-  const lock = LockService.getScriptLock();
-  try { lock.waitLock(20000); } catch (e) {}
-  try {
+  // 줄을 맨 아래에 새로 붙이기만 하므로 잠금을 못 잡아도 안전합니다. 제출을 놓치는 것이 더 나쁩니다.
+  return withLock(20000, "제출명단 " + d.sid, function () {
     const sheet = getLogSheet();
     sheet.appendRow([
-      new Date(), d.sid, d.name,
+      new Date(), d.sid, safeCell(d.name),
       num(d.meta, /최종 문장 (\d+)/), num(d.meta, /표현 (\d+)/),
       num(d.meta, /화면이탈 (\d+)/), num(d.meta, /한글입력 (\d+)/),
-      d.meta,
-      files.length && files[0] ? files[0].getUrl() : "",
+      safeCell(d.meta),
+      files.length && files[0] ? files[0].getUrl() : "PDF 없음",
       d.dup ? "중복" : "", String(d.key || "").slice(0, 6)
     ]);
-  } finally {
-    try { lock.releaseLock(); } catch (e) {}
-  }
+  }, false);
 }
 
-function getLogSheet() {
+function getLogSheet() { return cachedSheet("log", getLogSheetFresh); }
+function getLogSheetFresh() {
   const props = PropertiesService.getScriptProperties();
   const folder = baseFolder();
   const saved = props.getProperty("logSheetId");
@@ -611,6 +669,7 @@ function whereIsLogSheet() {
 // 제출명단 파일을 못 찾을 때 한 번 실행: 저장된 연결을 지우고 폴더에서 다시 찾거나 새로 만듭니다.
 function relinkLogSheet() {
   PropertiesService.getScriptProperties().deleteProperty("logSheetId");
+  _sheetCache = {};                              // 보관해 둔 손잡이도 버리고 처음부터 다시 찾습니다
   whereIsLogSheet();
 }
 
@@ -657,7 +716,7 @@ function rebuildOverview() {
         fmt(r[COL.reg - 1]), fmt(r[COL.at - 1]),
         fmt(r[COL.draftAt - 1]), r[COL.count - 1] || "",
         fmt(r[COL.finalAt - 1]), phase === "done" ? num(meta, /최종 문장 (\d+)/) : "",
-        phase === "done" ? num(meta, /표현 (\d+)/) : (num(meta, /표현 (\d+)\)/) !== "" ? num(meta, /\(표현 (\d+)\)/) : ""),
+        phase === "done" ? num(meta, /표현 (\d+)/) : num(meta, /\(표현 (\d+)\)/),
         num(meta, /화면이탈 (\d+)/), num(meta, /한글입력 (\d+)/), num(meta, /사전 (\d+)/) + (num(meta, /자동완성차단 (\d+)/) ? " (자동완성 " + num(meta, /자동완성차단 (\d+)/) + ")" : ""),
         pick(meta, /소요 ([^|]+)/) === "-" ? "" : pick(meta, /소요 ([^|]+)/).replace(/조사|초안|최종/g, "").replace(/\s+/g, " ").trim(),
         dup ? "중복" : "", hasRoster ? (roster[sid] ? (roster[sid] === String(r[COL.name - 1] || "").trim() ? "" : "이름 다름") : "명단에 없음") : "",
@@ -665,7 +724,7 @@ function rebuildOverview() {
       ]);
     });
     if (hasRoster) Object.keys(roster).forEach((sid) => { if (!seen[sid]) lines.push([classOf(sid), sid, roster[sid], "미접속", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]); });
-    lines.sort((a, b) => (Number(a[1]) - Number(b[1])) || (a[15] === "중복" ? 1 : -1));
+    lines.sort((a, b) => (Number(a[1]) - Number(b[1])) || ((a[15] === "중복" ? 1 : 0) - (b[15] === "중복" ? 1 : 0)));
 
     const header = ["반", "학번", "이름", "상태", "첫 접속", "마지막 저장", "초안 제출", "초안 문장", "최종 제출", "최종 문장", "표현", "이탈", "한글", "사전", "소요(조사/초안/최종)", "중복", "명단 확인", "초안 PDF", "최종 PDF"];
     let sh = ss.getSheetByName(ov.name || "총괄");
@@ -733,23 +792,45 @@ function logError(where, err, extra) {
 
 // 학생 한 명의 초안 PDF(또는 최종 PDF)를 시트에 저장된 내용으로 다시 만듭니다. 편집기에서 학번을 넣어 실행하세요.
 // 예) regeneratePdf("10315", "draft")  /  regeneratePdf("10315", "final")
-function regeneratePdf(sid, kind) {
+// 같은 학번 줄이 여러 개(중복)면 세 번째 값으로 [기기열쇠] 앞부분을 넣어 어느 줄인지 지정하세요.
+//   예) regeneratePdf("10315", "final", "a1b2c3")
+function regeneratePdf(sid, kind, keyPrefix) {
   kind = kind || "draft";
   const sh = draftSheet();
   const rows = allRows(sh);
-  let idx = -1;
-  for (let i = 0; i < rows.length; i++) if (String(rows[i][COL.sid - 1]) === String(sid)) { idx = i; break; }
-  if (idx < 0) throw new Error("학번 " + sid + " 줄이 없습니다.");
+  const hits = [];
+  for (let i = 0; i < rows.length; i++) if (String(rows[i][COL.sid - 1]) === String(sid)) hits.push(i);
+  if (!hits.length) throw new Error("학번 " + sid + " 줄이 없습니다.");
+  let idx;
+  if (keyPrefix) {
+    const pick2 = hits.filter((i) => String(rows[i][COL.key - 1] || "").indexOf(String(keyPrefix)) === 0);
+    if (!pick2.length) throw new Error("학번 " + sid + " 에서 열쇠가 \"" + keyPrefix + "\" 로 시작하는 줄이 없습니다.");
+    idx = pick2[0];
+  } else if (hits.length > 1) {
+    throw new Error("학번 " + sid + " 줄이 " + hits.length + "개입니다(중복). 세 번째 값으로 열쇠 앞부분을 넣어 지정하세요: " +
+      hits.map((i) => String(rows[i][COL.key - 1] || "(빈 열쇠)").slice(0, 6)).join(", "));
+  } else idx = hits[0];
+
   const r = rows[idx];
-  let st = {}; try { st = JSON.parse(r[COL.json - 1] || "{}"); } catch (e) {}
+  // 깨진 데이터를 조용히 넘기면 빈 PDF를 만들어 멀쩡한 링크를 덮어씁니다. 그래서 여기서 멈춥니다.
+  let st = {};
+  const raw = String(r[COL.json - 1] || "");
+  if (raw) {
+    try { st = JSON.parse(raw); }
+    catch (e) { throw new Error("데이터(JSON) 칸을 읽을 수 없습니다 (길이 " + raw.length + "). 최종본이 여기에만 있으므로 PDF를 만들지 않았습니다. 오류: " + e.message); }
+  }
+  const finalText = String(st.final || "");
+  if (kind === "final" && !finalText.trim()) throw new Error("저장된 최종본이 비어 있습니다. 기존 PDF 링크를 지우지 않으려고 만들지 않았습니다.");
+
   const bank = parseBank(PropertiesService.getScriptProperties().getProperty("bank") || "[]");
   const d = { sid: String(r[COL.sid - 1]), name: String(r[COL.name - 1] || ""), key: String(r[COL.key - 1] || ""), title: st.title || "영어 쓰기 수행평가", subtitle: st.subtitle || "",
-    brainstorm: String(r[COL.brain - 1] || ""), draft: String(r[COL.draft - 1] || ""), final: String(st.final || ""), meta: String(r[COL.meta - 1] || ""), bank: bank,
+    brainstorm: String(r[COL.brain - 1] || ""), draft: String(r[COL.draft - 1] || ""), final: finalText, meta: String(r[COL.meta - 1] || ""), bank: bank,
     dup: String(r[COL.dup - 1] || "") === "Y" };
-  const pdf = savePdf(d, kind);   // 오류가 나면 편집기에 그대로 표시됩니다
-  sh.getRange(idx + 2, kind === "final" ? COL.finalPdf : COL.pdf).setValue(pdf.getUrl());
-  Logger.log("만들어졌습니다: " + pdf.getUrl());
-  return pdf.getUrl();
+  const files = savePdf(d, kind);   // 오류가 나면 편집기에 그대로 표시됩니다
+  const url = files[0].getUrl();
+  sh.getRange(idx + 2, kind === "final" ? COL.finalPdf : COL.pdf).setValue(url);
+  Logger.log("만들어졌습니다: " + url);
+  return url;
 }
 
 /* ────────────────────────── 메일 보내기 ────────────────────────── */
