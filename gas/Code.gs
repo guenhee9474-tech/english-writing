@@ -1,0 +1,802 @@
+/**
+ * 영어 쓰기 수행평가 - 제출물 받기
+ * 학생이 작성 페이지에서 "제출"을 누르면 이 스크립트가 받아서
+ *   1) 구글 문서를 만들고  2) PDF(또는 Word)로 변환해  3) 지정한 드라이브 폴더에 올리고
+ *   4) 명단 시트에 한 줄 기록합니다. (메일 발송은 선택)
+ *
+ * ── 먼저 폴더 준비 ────────────────────────────────────────
+ * 공유 드라이브(또는 공유한 일반 폴더)에 제출물 폴더를 하나 만들고 그 폴더를 엽니다.
+ * 주소창이 https://drive.google.com/drive/folders/1AbC...xyz 이면 folders/ 뒤의 긴 문자열이 폴더 ID입니다.
+ * 공유 드라이브라면 이 스크립트를 실행하는 계정이 "콘텐츠 관리자" 또는 "기여자"여야 파일을 올릴 수 있습니다.
+ *
+ * ── 설치 방법 ─────────────────────────────────────────────
+ * 1. script.google.com 접속 → "새 프로젝트"
+ * 2. 편집기의 기존 코드를 모두 지우고 이 파일 내용을 붙여넣기
+ * 3. 아래 CFG 의 folderId 에 위에서 복사한 폴더 ID를 넣기 (나머지는 그대로 두어도 됩니다)
+ * 4. 오른쪽 위 "배포" → "새 배포" → 유형 선택(톱니바퀴) → "웹 앱"
+ *      다음 사용자 인증 정보로 실행: 나
+ *      액세스 권한이 있는 사용자: 모든 사용자      ← 반드시 이것
+ *    → "배포" → 권한 검토 → 계정 선택 → "고급" → "...(안전하지 않음)으로 이동" → 허용
+ *    (본인이 만든 스크립트라 뜨는 경고입니다.)
+ * 5. 나오는 "웹 앱 URL"(https://script.google.com/macros/s/.../exec)을 복사
+ * 6. 작성 페이지 HTML의 CONFIG.submit.scriptUrl 에 붙여넣고 CONFIG.submit.token 을 아래 CFG.token 과 똑같이 맞춘 뒤
+ *    GitHub에 다시 업로드
+ *
+ * ── 코드를 고친 뒤에는 ────────────────────────────────────
+ * "배포" → "배포 관리" → 연필(수정) → 버전 "새 버전" → "배포"를 눌러야 반영됩니다. URL은 그대로입니다.
+ *
+ * ── 기기 열쇠 ────────────────────────────────────────────
+ * 학생이 처음 로그인하면 서버가 무작위 열쇠를 만들어 그 기기에만 저장합니다. 이후 모든 읽기·쓰기는 학번+열쇠가 맞아야 합니다.
+ * 같은 학번이 열쇠 없이(다른 기기에서) 들어오면 기존 줄을 건드리지 않고 "중복" 표시가 된 새 줄에 따로 저장합니다.
+ * 기기가 바뀐 학생: "초안" 탭에서 그 학생 줄의 [기기열쇠] 칸을 지우세요. 다음에 로그인하는 기기가 그 줄을 이어받습니다.
+ *
+ * ── 총괄 시트 ────────────────────────────────────────────
+ * 제출명단 파일 안에 "총괄" 탭(학생별 한 줄: 반·학번·이름·상태·제출 시각·문장/표현/이탈·PDF 링크)과
+ * "반별 요약" 탭(반별 접속·초안·최종 제출 인원)이 자동으로 만들어지고, 초안·최종 제출 때마다 갱신됩니다.
+ * 즉시 갱신하려면 함수 목록에서 rebuildOverview 를 실행하세요.
+ * 같은 파일에 "명단" 탭을 만들어 A열 학번, B열 이름을 붙여 넣으면(1행은 제목) 한 번도 접속하지 않은 학생도
+ * "미접속"으로 표시되고, 명단에 없는 학번으로 들어온 학생은 "명단에 없음"으로 표시됩니다.
+ *
+ * ── 두 번에 나눠 하는 활동 (학번+이름 = 학생 ID) ─────────────
+ * 학생이 작성하는 동안 1분마다, 그리고 초안을 제출할 때 학생 상태 전체가 "초안" 시트(제출명단 파일의 두 번째 탭)에
+ * 저장됩니다. 학생이 같은 학번·이름으로 다시 로그인하면 이 시트의 상태로 이어지므로 다른 아이패드에서도 됩니다.
+ *   - 초안 제출 전이면 1회차(조사 → 초안)가 열리고, 초안을 제출했으면 2회차(최종 글쓰기)가 열립니다.
+ *   - 학번은 같은데 이름이 다르면 열어 주지 않습니다.
+ * 2회차(최종 제출)에 PDF를 만들고 제출명단에 기록합니다.
+ *
+ * 단어 사전: 작성 페이지의 "사전" 버튼은 단어 하나만 여기로 보내고, 구글 번역으로 뜻을 받아 갑니다.
+ *   띄어쓰기가 있거나 20자를 넘으면 서버가 거절하므로 문장 번역기로는 쓸 수 없습니다.
+ *   찾은 단어는 "사전" 탭과 학생 제출물의 자동집계에 모두 남습니다. 끄려면 CFG.dict.enabled: false
+ *
+ * 최종 단계 열고 닫기(선택): 초안을 일찍 낸 학생이 같은 시간에 최종까지 써 버리는 것을 막고 싶으면
+ *   함수 목록에서 closeFinal 을 실행해 두고, 2회차 수업 때 openFinal 을 실행하세요. 기본은 열림입니다.
+ *
+ * ── 미리 확인하기 ─────────────────────────────────────────
+ * 위쪽 함수 목록에서 testSubmit 을 골라 "실행"하면 샘플 제출물이 하나 폴더에 올라갑니다.
+ */
+
+const CFG = {
+  folderId: "1sfIusHdcvCeiSJwvli1YL2ynPq75KF-0", // ★ 제출물을 올릴 드라이브 폴더 ID. 비워 두면 내 드라이브에 folderName 폴더를 만듭니다.
+  folderName: "영어쓰기_수행평가_제출물",        // folderId 를 비워 둘 때만 사용
+
+  subfolderByClass: true,                       // true: 학번 앞 세 자리(예: 10315 → "103")로 반별 하위 폴더를 만들어 정리
+  format: "pdf",                                // "pdf" | "docx" | "both"
+
+  logSheet: true,                               // true: 같은 폴더에 "제출명단" 시트를 만들어 한 줄씩 기록
+  logSheetName: "제출명단",
+  draftSheetName: "초안",                        // 학생 상태(자동 저장·초안)를 보관하는 시트 (제출명단 파일 안의 두 번째 탭)
+  draftPdf: true,                               // true: 1회차 초안 제출 때도 PDF를 만들어 반 폴더 안 "초안" 폴더에 저장
+  overview: { name: "총괄", summaryName: "반별 요약", rosterName: "명단" },   // 총괄 시트 탭 이름
+
+  notifyEmail: "",                              // 메일도 받고 싶을 때만 주소 입력 (예: "guenhee9474@snu.ac.kr"). 비우면 메일 없음
+  attachToEmail: true,                          // 메일에 파일 첨부 여부
+  subjectPrefix: "[영어 쓰기 수행평가]",
+
+  // 단어 사전: 작성 페이지의 사전 버튼이 여기로 단어 하나를 보내면 구글 번역(LanguageApp)으로 뜻을 돌려주고 기록합니다.
+  dict: { enabled: true, maxLen: 20, maxPerStudent: 80, logSheetName: "사전" },
+
+  token: "gfa2026",                             // 작성 페이지의 CONFIG.submit.token 과 같아야 함
+  maxChars: 20000                               // 한 항목당 글자 수 상한 (장난 제출 방지)
+};
+
+/* ────────────────────────── 제출 받기 ────────────────────────── */
+
+function doPost(e) {
+  try {
+    const p = (e && e.parameter) || {};
+    if (CFG.token && p.token !== CFG.token) return textOut("BAD_TOKEN");
+
+    const data = {
+      sid: cut(p.sid || "학번없음", 40),
+      name: cut(p.name || "이름없음", 40),
+      key: cut(p.key || "", 64),
+      title: cut(p.title || "영어 쓰기 수행평가", 120),
+      subtitle: cut(p.subtitle || "", 120),
+      brainstorm: cut(p.brainstorm || "", CFG.maxChars),
+      draft: cut(p.draft || "", CFG.maxChars),
+      final: cut(p.final || "", CFG.maxChars),
+      meta: cut(p.meta || "", 4000),
+      bank: parseBank(p.bank)
+    };
+    if (!data.key) return textOut("NO_KEY");           // 열쇠 없는 저장은 받지 않음 (로그인 때 발급됨)
+    const row = findRow(draftSheet(), data.sid, data.key);
+    if (!row) return textOut("UNKNOWN_KEY");
+    data.dup = String(draftSheet().getRange(row, COL.dup).getValue() || "") === "Y";
+
+    if (p.phase === "save") {                          // 작성 중 자동 저장: 상태 + 읽을 수 있는 텍스트
+      saveDraft(data, p.data || "", phaseOf(p.data), "");
+      return textOut("OK_SAVE");
+    }
+    if (p.bank) { try { PropertiesService.getScriptProperties().setProperty("bank", p.bank); } catch (eb) {} }   // 재생성용
+    if (p.phase === "draft") {                         // 1회차 초안 제출: (선택) PDF + 상태 저장
+      let link = "";
+      if (CFG.draftPdf) {
+        try { link = savePdf(data, "draft").getUrl(); }
+        catch (e0) { logError("초안 PDF", e0, data.sid); link = "PDF 실패: " + String(e0 && e0.message || e0).slice(0, 120); }
+      }
+      saveDraft(data, p.data || "", "draftDone", link);
+      try { rebuildOverview(); } catch (e5) {}
+      return textOut("OK_DRAFT");
+    }
+
+    const files = [savePdf(data, "final")];            // 2회차: PDF + 명단
+    if (CFG.format === "docx" || CFG.format === "both") { try { if (files[0].docx) files.push(files[0].docx); } catch (e4) {} }
+    // 시트 기록이나 메일이 실패해도 파일 저장은 이미 끝났으므로 제출은 성공으로 처리합니다.
+    if (CFG.logSheet) { try { logRow(data, files); } catch (e1) {} }
+    try { saveDraft(data, p.data || "", "done", files[0] ? files[0].getUrl() : ""); } catch (e3) {}
+    if (CFG.notifyEmail) { try { sendMail(data, files); } catch (e2) {} }
+    try { rebuildOverview(); } catch (e5) {}
+    return textOut("OK");
+  } catch (err) {
+    // 실패해도 학생 화면이 멈추지 않도록 항상 응답합니다. 오류는 "오류" 탭(과 설정한 메일)에 남깁니다.
+    logError("제출 처리", err, (e && e.parameter && (e.parameter.phase + " " + e.parameter.sid)) || "");
+    try {
+      if (CFG.notifyEmail) MailApp.sendEmail(CFG.notifyEmail, CFG.subjectPrefix + " 제출 처리 오류",
+        String(err) + "\n\n" + JSON.stringify((e && e.parameter) || {}).slice(0, 3000));
+    } catch (ignore) {}
+    return textOut("ERROR");
+  }
+}
+
+// 작성 페이지가 읽어 가는 정보 (JSONP). 브라우저로 그냥 열면 상태 문구만 보입니다.
+function doGet(e) {
+  const p = (e && e.parameter) || {};
+  const cb = p.callback;
+  if (!cb) return textOut("작성 페이지의 제출을 받는 주소입니다. 정상 작동 중. 최종 단계: " + (isFinalOpen() ? "열림" : "닫힘"));
+  let out = {};
+  try {
+    if (CFG.token && p.token !== CFG.token) out = { error: "BAD_TOKEN" };
+    else if (p.action === "load") {                 // 로그인: 열쇠 확인·발급 + 저장된 상태 + 최종 제출 여부 + 최종 단계 열림 여부
+      out = loadOrRegister(p.sid, p.name, p.key);
+      out.finalOpen = isFinalOpen();
+      out.finalAt = null;
+      try { out.finalAt = checkStatus(p.sid, out.key).finalAt; } catch (e) {}
+    }
+    else if (p.action === "dict") out = dictLookup(p);
+    else if (p.action === "check") out = checkStatus(p.sid, p.key);
+    else if (p.action === "session") out = { session: 1, finalOpen: isFinalOpen() };
+    else out = { ok: true };
+  } catch (err) { out = { error: String(err) }; }
+  const js = String(cb).replace(/[^\w$.]/g, "") + "(" + JSON.stringify(out) + ");";
+  return ContentService.createTextOutput(js).setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
+
+/* ────────────────────────── 단어 사전 ────────────────────────── */
+
+// 단어 하나만 받는다. 띄어쓰기가 있거나 길면 거절 → 문장 번역기로 쓸 수 없음.
+function dictLookup(p) {
+  const c = CFG.dict || {};
+  if (!c.enabled) return { error: "DISABLED" };
+  const q = String(p.q || "").trim();
+  if (!q || /\s/.test(q) || q.length > (c.maxLen || 20) || !/^[A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ'\-]+$/.test(q)) return { error: "BAD_QUERY" };
+  const sid = String(p.sid || "");
+  if (!findRow(draftSheet(), sid, String(p.key || ""))) return { error: "NO_KEY" };   // 로그인한 기기에서만
+  // 학생별 하루 조회 상한 (캐시 6시간)
+  const cache = CacheService.getScriptCache();
+  const key = "dict_" + sid;
+  const used = Number(cache.get(key) || 0);
+  if (c.maxPerStudent && used >= c.maxPerStudent) return { error: "LIMIT" };
+  const ko = /[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(q);
+  let a = "";
+  try { a = LanguageApp.translate(q, ko ? "ko" : "en", ko ? "en" : "ko"); } catch (e) { return { error: "TRANSLATE_FAIL" }; }
+  a = String(a || "").trim();
+  cache.put(key, String(used + 1), 21600);
+  try {
+    const sh = dictSheet();
+    sh.appendRow([new Date(), sid, String(p.name || ""), String(p.phase || ""), q, a]);
+  } catch (e) {}
+  return { q: q, a: a, dir: ko ? "ko→en" : "en→ko" };
+}
+function dictSheet() {
+  const ss = SpreadsheetApp.openById(getLogSheet().getParent().getId());
+  let sh = ss.getSheetByName(CFG.dict.logSheetName || "사전");
+  if (!sh) {
+    sh = ss.insertSheet(CFG.dict.logSheetName || "사전");
+    sh.appendRow(["시각", "학번", "이름", "단계", "찾은 단어", "결과"]);
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+/* ────────────────────────── 최종 단계 열고 닫기 ────────────────────────── */
+
+function isFinalOpen() { return PropertiesService.getScriptProperties().getProperty("finalOpen") !== "0"; }
+function openFinal()  { PropertiesService.getScriptProperties().setProperty("finalOpen", "1"); Logger.log("최종 단계 열림"); }
+function closeFinal() { PropertiesService.getScriptProperties().setProperty("finalOpen", "0"); Logger.log("최종 단계 닫힘 (초안 제출까지만 가능)"); }
+function phaseOf(json) { try { return String(JSON.parse(json).phase || ""); } catch (e) { return ""; } }
+
+/* ────────────────────────── 초안 보관 (1회차) ────────────────────────── */
+
+// 초안 시트 열
+const DRAFT_HEADER = ["학번", "이름", "기기열쇠", "등록시각", "저장시각", "단계", "초안 문장수", "자동집계", "브레인스토밍", "초안", "초안 PDF", "데이터(JSON)", "중복", "초안제출시각", "최종제출시각", "최종 PDF"];
+const COL = { sid: 1, name: 2, key: 3, reg: 4, at: 5, phase: 6, count: 7, meta: 8, brain: 9, draft: 10, pdf: 11, json: 12, dup: 13, draftAt: 14, finalAt: 15, finalPdf: 16 };
+function draftSheet() {
+  const ss = SpreadsheetApp.openById(getLogSheet().getParent().getId());
+  let sh = ss.getSheetByName(CFG.draftSheetName);
+  if (sh) {
+    const h = sh.getRange(1, 1, 1, DRAFT_HEADER.length).getValues()[0];
+    if (String(h[COL.key - 1]) !== "기기열쇠" || String(h[COL.finalPdf - 1]) !== "최종 PDF") {
+      sh.setName(CFG.draftSheetName + "_old_" + Utilities.formatDate(new Date(), "Asia/Seoul", "MMdd_HHmm"));
+      sh = null;
+    }
+  }
+  if (!sh) {
+    sh = ss.insertSheet(CFG.draftSheetName);
+    sh.appendRow(DRAFT_HEADER);
+    sh.setFrozenRows(1);
+    sh.setColumnWidth(COL.brain, 260); sh.setColumnWidth(COL.draft, 420); sh.hideColumns(COL.json);
+  }
+  return sh;
+}
+function allRows(sh) {
+  const last = sh.getLastRow();
+  return last < 2 ? [] : sh.getRange(2, 1, last - 1, DRAFT_HEADER.length).getValues();
+}
+// 학번 + 열쇠가 모두 맞는 줄
+function findRow(sh, sid, key) {
+  if (!key) return 0;
+  const rows = allRows(sh);
+  for (let i = 0; i < rows.length; i++) if (String(rows[i][COL.sid - 1]) === String(sid) && String(rows[i][COL.key - 1]) === String(key)) return i + 2;
+  return 0;
+}
+function newKey() { return Utilities.getUuid().replace(/-/g, "").slice(0, 20); }
+
+// 로그인: 열쇠가 맞으면 그 줄을, 없으면 (열쇠 칸이 비어 있는 같은 학번 줄이 있으면 이어받고) 아니면 새 줄을 만든다
+function loadOrRegister(sid, name, key) {
+  sid = String(sid || "").trim(); name = String(name || "").trim();
+  if (!/^\d{3,}$/.test(sid) || !name) return { found: false, error: "BAD_ID" };
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(20000); } catch (e) {}
+  try {
+    const sh = draftSheet();
+    let r = findRow(sh, sid, key);
+    if (r) {
+      const v = sh.getRange(r, 1, 1, DRAFT_HEADER.length).getValues()[0];
+      return { found: !!v[COL.json - 1], data: v[COL.json - 1] || null, at: v[COL.at - 1], phase: v[COL.phase - 1] || "", key: key,
+               name: String(v[COL.name - 1] || name), dup: String(v[COL.dup - 1] || "") === "Y" };
+    }
+    // 열쇠가 없거나 모르는 열쇠: 이어받을 줄(열쇠 칸이 빈 같은 학번)이 있는지
+    const rows = allRows(sh);
+    const fresh = newKey();
+    for (let i = 0; i < rows.length; i++) {
+      if (String(rows[i][COL.sid - 1]) === String(sid) && !String(rows[i][COL.key - 1] || "")) {
+        const rr = i + 2;
+        sh.getRange(rr, COL.key).setValue(fresh);
+        return { found: !!rows[i][COL.json - 1], data: rows[i][COL.json - 1] || null, at: rows[i][COL.at - 1], phase: rows[i][COL.phase - 1] || "", key: fresh,
+                 name: String(rows[i][COL.name - 1] || name), dup: String(rows[i][COL.dup - 1] || "") === "Y", transferred: true };
+      }
+    }
+    // 새 등록. 같은 학번이 이미 있으면 중복 표시
+    const exists = rows.some((row) => String(row[COL.sid - 1]) === String(sid));
+    const row = [sid, name, fresh, new Date(), new Date(), "research", "", "", "", "", "", "", exists ? "Y" : "", "", "", ""];
+    sh.appendRow(row);
+    return { found: false, key: fresh, name: name, dup: exists };
+  } finally { try { lock.releaseLock(); } catch (e) {} }
+}
+
+const PHASE_ORDER = { research: 0, draft: 1, draftDone: 2, final: 3, done: 4 };
+function saveDraft(d, json, phase, pdfLink) {
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(20000); } catch (e) {}
+  try {
+    const sh = draftSheet();
+    const r = findRow(sh, d.sid, d.key);
+    if (!r) return;
+    const old = sh.getRange(r, 1, 1, DRAFT_HEADER.length).getValues()[0];
+    // 이미 더 앞선 단계가 저장되어 있으면(예: 초안 제출 뒤에 도착한 늦은 자동 저장) 덮어쓰지 않는다
+    const prev = String(old[COL.phase - 1] || "");
+    if ((PHASE_ORDER[prev] || 0) > (PHASE_ORDER[phase] || 0)) return;
+    const now = new Date();
+    const row = [d.sid, old[COL.name - 1] || d.name, d.key, old[COL.reg - 1] || now, now, phase || "",
+      num(d.meta, /초안 문장 (\d+)/), d.meta, String(d.brainstorm || "").slice(0, 20000), String(d.draft || "").slice(0, 20000),
+      (phase === "draftDone" && pdfLink) ? pdfLink : String(old[COL.pdf - 1] || ""), String(json).slice(0, 45000), old[COL.dup - 1] || "",
+      phase === "draftDone" ? now : (old[COL.draftAt - 1] || ""), phase === "done" ? now : (old[COL.finalAt - 1] || ""),
+      (phase === "done" && pdfLink) ? pdfLink : String(old[COL.finalPdf - 1] || "")];
+    sh.getRange(r, 1, 1, row.length).setValues([row]);
+  } finally { try { lock.releaseLock(); } catch (e) {} }
+}
+function readDraft(sid, key) {
+  const sh = draftSheet();
+  const r = findRow(sh, sid, key);
+  if (!r) return { found: false };
+  const v = sh.getRange(r, 1, 1, DRAFT_HEADER.length).getValues()[0];
+  return { found: !!v[COL.json - 1], data: v[COL.json - 1], at: v[COL.at - 1], phase: v[COL.phase - 1] || "" };
+}
+function checkStatus(sid, key) {
+  const out = { draftAt: null, finalAt: null, draftPdf: "", finalPdf: "" };
+  try {
+    const sh = draftSheet(); const r = findRow(sh, sid, key);
+    if (r) { const v = sh.getRange(r, 1, 1, DRAFT_HEADER.length).getValues()[0]; if (v[COL.json - 1]) out.draftAt = v[COL.at - 1]; out.draftPdf = String(v[COL.pdf - 1] || ""); out.finalPdf = String(v[COL.finalPdf - 1] || ""); }
+  } catch (e) {}
+  try {
+    const sh = getLogSheet();
+    const last = sh.getLastRow();
+    if (last >= 2) {
+      const rows = sh.getRange(2, 1, last - 1, 11).getValues();
+      const kp = String(key || "").slice(0, 6);
+      for (let i = rows.length - 1; i >= 0; i--) if (String(rows[i][1]) === String(sid) && (!kp || String(rows[i][10] || "") === kp)) { out.finalAt = rows[i][0]; break; }
+    }
+  } catch (e) {}
+  return out;
+}
+
+/* ────────────────────────── 문서 만들기 (PDF) ────────────────────────── */
+
+const C_INK = "#1B2436", C_MUTED = "#5D6675", C_LINE = "#D8DEE7", C_BG = "#F2F4F7", C_MARK = "#FFE58A", C_ACCENT = "#0E7C66", C_DANGER = "#B42318";
+
+// kind: "final" | "draft"
+function savePdf(d, kind) {
+  const isFinal = kind === "final";
+  const base = targetFolder(d.sid);
+  let folder = base;
+  if (!isFinal) { const it = base.getFoldersByName("초안"); folder = it.hasNext() ? it.next() : base.createFolder("초안"); }
+  const stamp = Utilities.formatDate(new Date(), "Asia/Seoul", "yyyyMMdd_HHmm");
+  const name = d.sid + "_" + d.name + (isFinal ? "" : "_초안") + (d.dup ? "_중복" : "") + "_" + stamp;
+
+  const doc = DocumentApp.create(name);
+  const body = doc.getBody();
+  body.setMarginTop(48).setMarginBottom(48).setMarginLeft(56).setMarginRight(56);
+  body.setAttributes({ [DocumentApp.Attribute.FONT_FAMILY]: "Arial", [DocumentApp.Attribute.FONT_SIZE]: 10.5, [DocumentApp.Attribute.FOREGROUND_COLOR]: C_INK });
+
+  const finalStats = analyzeText(d.final, d.bank);
+  const draftStats = analyzeText(draftPlain(d.draft), d.bank);
+  const stats = isFinal ? finalStats : draftStats;
+
+  // 제목
+  para(body, d.title, { size: 20, bold: true, after: 2 });
+  para(body, (d.subtitle ? d.subtitle + "  ·  " : "") + (isFinal ? "최종 제출" : "1회차 초안 제출"), { size: 10, color: C_MUTED, after: 8 });
+
+  // 학생 정보 + 채점 요약 (한 표)
+  const when = Utilities.formatDate(new Date(), "Asia/Seoul", "yyyy-MM-dd HH:mm");
+  const rows = [
+    ["학번", d.sid, "이름", d.name + (d.dup ? "  (중복 학번)" : "")],
+    ["제출", when, "단계", isFinal ? "최종 글쓰기" : "초안"],
+    [isFinal ? "최종 문장 수" : "초안 문장 수", String(stats.sentences.length), "Word Bank 표현", stats.used.length + " / " + (d.bank.length || 0)]
+  ];
+  if (isFinal) rows.push(["초안 문장 수", String(draftStats.sentences.length), "소요", pick(d.meta, /소요 ([^|]+)/)]);
+  rows.push(["화면 이탈", pick(d.meta, /화면이탈 (\d+회)/), "한글 입력 / 선택", pick(d.meta, /한글입력 (\d+회)/) + " / " + pick(d.meta, /한글선택 (\d+회)/)]);
+  rows.push(["사전 조회", pick(d.meta, /사전 (\d+회)/), "자동완성 차단 / 대량 입력", pick(d.meta, /자동완성차단 (\d+회)/) + " / " + pick(d.meta, /대량입력 (\d+회)/)]);
+  infoTable(body, rows);
+
+  // Word Bank 사용 현황
+  para(body, "Word Bank", { size: 11, bold: true, before: 12, after: 3 });
+  wordBankLine(body, d.bank, stats.used);
+
+  // 본문
+  if (isFinal) {
+    heading(body, "Step 4. 최종본");
+    if (stats.sentences.length) stats.sentences.forEach((sen, i) => numbered(body, i + 1, sen, d.bank, 12));
+    else para(body, "(비어 있음)", { color: C_MUTED });
+  }
+  heading(body, "Step 3. 초안");
+  draftBlock(body, d.draft, d.bank);
+  heading(body, "Step 1-2. 예시 분석 및 브레인스토밍");
+  brainstormBlock(body, d.brainstorm);
+
+  // 자동 집계 (감사용)
+  heading(body, "자동 집계");
+  para(body, d.meta || "-", { size: 8.5, color: C_MUTED });
+  para(body, "이 문서는 작성 페이지의 제출 시점에 자동 생성되었습니다. 노란 표시 = Word Bank 표현.", { size: 8, color: C_MUTED, before: 6 });
+
+  doc.saveAndClose();
+  const docFile = DriveApp.getFileById(doc.getId());
+  const pdf = folder.createFile(docFile.getAs("application/pdf").setName(name + ".pdf"));
+  if (isFinal && (CFG.format === "docx" || CFG.format === "both")) {
+    try { pdf.docx = folder.createFile(exportDocx(doc.getId(), name)); } catch (e) {}
+  }
+  docFile.setTrashed(true);
+  return pdf;
+}
+
+// ---- 문서 조각 ----
+function para(body, text, o) {
+  o = o || {};
+  const p = body.appendParagraph(String(text || ""));
+  p.setSpacingBefore(o.before || 0).setSpacingAfter(o.after == null ? 2 : o.after);
+  const t = p.editAsText();
+  t.setFontSize(o.size || 10.5).setBold(!!o.bold).setForegroundColor(o.color || C_INK);
+  if (o.font) t.setFontFamily(o.font);
+  return p;
+}
+function heading(body, text) {
+  const p = para(body, text, { size: 12, bold: true, before: 14, after: 4 });
+  return p;
+}
+function infoTable(body, rows) {
+  const t = body.appendTable(rows);
+  t.setBorderColor(C_LINE).setBorderWidth(0.75);
+  for (let r = 0; r < t.getNumRows(); r++) {
+    const row = t.getRow(r);
+    for (let c = 0; c < row.getNumCells(); c++) {
+      const cell = row.getCell(c);
+      cell.setPaddingTop(3).setPaddingBottom(3).setPaddingLeft(6).setPaddingRight(6);
+      const tx = cell.editAsText();
+      tx.setFontSize(9.5);
+      if (c % 2 === 0) { cell.setBackgroundColor(C_BG); tx.setBold(true).setForegroundColor(C_MUTED); cell.setWidth(78); }
+      else { tx.setForegroundColor(C_INK); }
+    }
+  }
+  return t;
+}
+function wordBankLine(body, bank, used) {
+  const p = body.appendParagraph("");
+  p.setSpacingAfter(2);
+  const t = p.editAsText();
+  let pos = 0;
+  bank.forEach((w, i) => {
+    const label = (used.indexOf(i) >= 0 ? "✓ " : "") + w.label;
+    t.appendText(label);
+    const end = pos + label.length - 1;
+    t.setFontSize(pos, end, 10);
+    if (used.indexOf(i) >= 0) { t.setBackgroundColor(pos, end, C_MARK).setBold(pos, end, true).setForegroundColor(pos, end, C_INK); }
+    else { t.setBold(pos, end, false).setForegroundColor(pos, end, C_MUTED).setBackgroundColor(pos, end, "#FFFFFF"); }
+    pos = end + 1;
+    if (i < bank.length - 1) { t.appendText("   "); t.setBackgroundColor(pos, pos + 2, "#FFFFFF"); pos += 3; }
+  });
+  return p;
+}
+// 번호가 붙은 문장 한 줄 (영문은 Georgia), Word Bank 구간을 노란 배경으로
+function numbered(body, n, text, bank, size) {
+  const prefix = "(" + n + ")  ";
+  const p = body.appendParagraph(prefix + text);
+  p.setSpacingAfter(3).setLineSpacing(1.35);
+  const t = p.editAsText();
+  t.setFontSize(size || 11.5).setFontFamily("Georgia").setForegroundColor(C_INK);
+  t.setFontSize(0, prefix.length - 1, 9).setForegroundColor(0, prefix.length - 1, C_MUTED);
+  matchRanges(text, bank).forEach((r) => { t.setBackgroundColor(prefix.length + r.s, prefix.length + r.e - 1, C_MARK); });
+  return p;
+}
+function draftBlock(body, draftText, bank) {
+  const lines = String(draftText || "").split("\n");
+  if (!lines.join("").trim()) { para(body, "(비어 있음)", { color: C_MUTED }); return; }
+  lines.forEach((line) => {
+    const m = line.match(/^\((\d+)\)\s?(.*)$/);
+    if (m) {
+      if (!m[2].trim()) { para(body, "(" + m[1] + ")  ", { size: 9, color: C_MUTED, font: "Georgia" }); return; }
+      numbered(body, m[1], m[2], bank, 11);
+    } else if (line.trim()) {
+      para(body, line, { size: 10, bold: true, before: 6, after: 2, color: C_MUTED });
+    }
+  });
+}
+function brainstormBlock(body, text) {
+  const lines = String(text || "").split("\n");
+  if (!lines.join("").trim()) { para(body, "(비어 있음)", { color: C_MUTED }); return; }
+  lines.forEach((line) => {
+    if (!line.trim()) return;
+    if (/^\[.*\]$/.test(line.trim())) { para(body, line.trim().replace(/[\[\]]/g, ""), { size: 10, bold: true, before: 6, after: 2, color: C_MUTED }); return; }
+    const m = line.match(/^([^:]{1,40}:|\d\.\s[^\s]+(?:\s[A-Za-z→\d ]+)?)\s*(.*)$/);
+    const p = body.appendParagraph(line);
+    p.setSpacingAfter(2);
+    const t = p.editAsText(); t.setFontSize(10.5);
+    if (m && m[1]) { t.setBold(0, m[1].length - 1, true).setForegroundColor(0, m[1].length - 1, C_MUTED); }
+  });
+}
+function draftPlain(draftText) {
+  return String(draftText || "").split("\n").map((l) => { const m = l.match(/^\(\d+\)\s?(.*)$/); return m ? m[1] : ""; }).filter((x) => x.trim()).join(" ");
+}
+function pick(meta, re) { const m = String(meta || "").match(re); return m ? m[1].trim() : "-"; }
+
+// ---- 분석 (작성 페이지와 같은 규칙) ----
+function parseBank(json) {
+  try {
+    const arr = JSON.parse(json || "[]");
+    return arr.map((w) => ({ label: String(w.label || ""), re: new RegExp(w.source, String(w.flags || "i").replace("g", "")) })).filter((w) => w.label);
+  } catch (e) { return []; }
+}
+function splitSentences(text) {
+  const t = String(text || "").replace(/\s+/g, " ").trim();
+  if (!t) return [];
+  const out = []; const re = /[^.!?]+(?:[.!?]+["')\]]*|$)/g; let m;
+  while ((m = re.exec(t)) !== null) {
+    if (m.index === re.lastIndex) { re.lastIndex++; continue; }
+    const s = m[0].trim(); if (/[A-Za-z]{2,}/.test(s)) out.push(s);
+  }
+  return out;
+}
+function analyzeText(text, bank) {
+  const used = [];
+  (bank || []).forEach((w, i) => { if (w.re.test(String(text || ""))) used.push(i); });
+  return { sentences: splitSentences(text), used: used };
+}
+function matchRanges(text, bank) {
+  const ranges = [];
+  (bank || []).forEach((w) => {
+    const g = new RegExp(w.re.source, w.re.flags.includes("g") ? w.re.flags : w.re.flags + "g"); let m;
+    while ((m = g.exec(text)) !== null) { if (!m[0].length) { g.lastIndex++; continue; } ranges.push({ s: m.index, e: m.index + m[0].length }); }
+  });
+  ranges.sort((a, b) => a.s - b.s || b.e - a.e);
+  const out = []; let pos = 0;
+  ranges.forEach((r) => { if (r.s < pos) return; out.push(r); pos = r.e; });
+  return out;
+}
+
+function baseFolder() {
+  if (CFG.folderId) return DriveApp.getFolderById(CFG.folderId);
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(10000); } catch (e) {}
+  try {
+    const it = DriveApp.getFoldersByName(CFG.folderName);
+    return it.hasNext() ? it.next() : DriveApp.createFolder(CFG.folderName);
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
+}
+
+// 학번 앞 세 자리로 반별 하위 폴더 (10315 → "103")
+function targetFolder(sid) {
+  const base = baseFolder();
+  if (!CFG.subfolderByClass) return base;
+  const m = String(sid).match(/^\d{3}/);
+  if (!m) return base;
+  const name = m[0] + "반";
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(10000); } catch (e) {}
+  try {
+    const it = base.getFoldersByName(name);
+    return it.hasNext() ? it.next() : base.createFolder(name);
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
+}
+
+/* ────────────────────────── 제출 명단 시트 ────────────────────────── */
+
+function logRow(d, files) {
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(20000); } catch (e) {}
+  try {
+    const sheet = getLogSheet();
+    sheet.appendRow([
+      new Date(), d.sid, d.name,
+      num(d.meta, /최종 문장 (\d+)/), num(d.meta, /표현 (\d+)/),
+      num(d.meta, /화면이탈 (\d+)/), num(d.meta, /한글입력 (\d+)/),
+      d.meta,
+      files.length && files[0] ? files[0].getUrl() : "",
+      d.dup ? "중복" : "", String(d.key || "").slice(0, 6)
+    ]);
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
+}
+
+function getLogSheet() {
+  const props = PropertiesService.getScriptProperties();
+  const folder = baseFolder();
+  const saved = props.getProperty("logSheetId");
+  if (saved) {
+    try {
+      const f = DriveApp.getFileById(saved);
+      if (!f.isTrashed()) {
+        // 예전 테스트 때 다른 폴더(내 드라이브 등)에 만들어졌으면 제출물 폴더로 옮긴다
+        let inFolder = false; const ps = f.getParents();
+        while (ps.hasNext()) { if (ps.next().getId() === folder.getId()) inFolder = true; }
+        if (!inFolder) { try { f.moveTo(folder); } catch (e) {} }
+        return logTab(SpreadsheetApp.openById(saved));
+      }
+    } catch (e) {}
+    props.deleteProperty("logSheetId");
+  }
+  const it = folder.getFilesByName(CFG.logSheetName);
+  while (it.hasNext()) {
+    const f = it.next();
+    if (f.getMimeType() === MimeType.GOOGLE_SHEETS) { props.setProperty("logSheetId", f.getId()); return logTab(SpreadsheetApp.openById(f.getId())); }
+  }
+  const ss = SpreadsheetApp.create(CFG.logSheetName);
+  try { DriveApp.getFileById(ss.getId()).moveTo(folder); } catch (e) {}
+  props.setProperty("logSheetId", ss.getId());
+  const sheet = ss.getSheets()[0];
+  sheet.setName(CFG.logSheetName);
+  sheet.appendRow(["제출시각", "학번", "이름", "문장수", "표현수", "화면이탈", "한글입력", "자동집계", "파일", "중복", "열쇠"]);
+  sheet.setFrozenRows(1);
+  return sheet;
+}
+// 제출명단 파일 안의 "제출명단" 탭 (없으면 첫 탭)
+function logTab(ss) { return ss.getSheetByName(CFG.logSheetName) || ss.getSheets()[0]; }
+// 제출명단 파일이 어디 있는지 알려 줍니다. 실행 후 아래 "실행 로그"에 뜨는 주소를 클릭하세요.
+function whereIsLogSheet() {
+  const sh = getLogSheet();
+  const ss = sh.getParent();
+  const f = DriveApp.getFileById(ss.getId());
+  const parents = []; const ps = f.getParents();
+  while (ps.hasNext()) parents.push(ps.next().getName());
+  let owner = "(공유 드라이브)";
+  try { const o = f.getOwner(); if (o) owner = o.getEmail(); } catch (e) {}
+  Logger.log("제출명단 파일 주소: " + ss.getUrl());
+  Logger.log("들어 있는 폴더: " + (parents.length ? parents.join(", ") : "(내 드라이브 최상위)"));
+  Logger.log("소유 계정: " + owner + "   휴지통: " + (f.isTrashed() ? "예" : "아니오"));
+  Logger.log("탭: " + ss.getSheets().map(function (x) { return x.getName(); }).join(", "));
+  return ss.getUrl();
+}
+// 제출명단 파일을 못 찾을 때 한 번 실행: 저장된 연결을 지우고 폴더에서 다시 찾거나 새로 만듭니다.
+function relinkLogSheet() {
+  PropertiesService.getScriptProperties().deleteProperty("logSheetId");
+  whereIsLogSheet();
+}
+
+function num(text, re) { const m = String(text || "").match(re); return m ? Number(m[1]) : ""; }
+
+/* ────────────────────────── 총괄 시트 ────────────────────────── */
+
+const STATUS_LABEL = { research: "조사 중", draft: "초안 작성 중", draftDone: "초안 제출", final: "최종 작성 중", done: "최종 제출" };
+const STATUS_COLOR = { "미접속": "#EEEEEE", "조사 중": "#E9F0FC", "초안 작성 중": "#E9F0FC", "초안 제출": "#FFF4CC", "최종 작성 중": "#FFF4CC", "최종 제출": "#DDF2EC" };
+
+function classOf(sid) {
+  const m = String(sid).match(/^(\d)(\d{2})/);
+  return m ? (Number(m[1]) + "학년 " + Number(m[2]) + "반") : "기타";
+}
+function fmt(d) { return (d instanceof Date && !isNaN(d)) ? Utilities.formatDate(d, "Asia/Seoul", "MM-dd HH:mm") : (d ? String(d) : ""); }
+
+// "총괄" 탭과 "반별 요약" 탭을 처음부터 다시 씁니다. 초안·최종 제출 때마다 자동으로, 또는 직접 실행해서 갱신.
+function rebuildOverview() {
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(30000); } catch (e) { return; }
+  try {
+    const ss = SpreadsheetApp.openById(getLogSheet().getParent().getId());
+    const ov = CFG.overview || {};
+    const rows = allRows(draftSheet());
+
+    // 명단(선택): A열 학번, B열 이름
+    const roster = {};
+    const rs = ss.getSheetByName(ov.rosterName || "명단");
+    if (rs && rs.getLastRow() >= 2) {
+      rs.getRange(2, 1, rs.getLastRow() - 1, 2).getValues().forEach((r) => { const id = String(r[0] || "").trim(); if (/^\d{3,}$/.test(id)) roster[id] = String(r[1] || "").trim(); });
+    }
+    const hasRoster = Object.keys(roster).length > 0;
+
+    const lines = [];
+    const seen = {};
+    rows.forEach((r) => {
+      const sid = String(r[COL.sid - 1] || "").trim(); if (!sid) return;
+      seen[sid] = true;
+      const meta = String(r[COL.meta - 1] || "");
+      const phase = String(r[COL.phase - 1] || "research");
+      const dup = String(r[COL.dup - 1] || "") === "Y";
+      lines.push([
+        classOf(sid), sid, String(r[COL.name - 1] || ""), STATUS_LABEL[phase] || phase,
+        fmt(r[COL.reg - 1]), fmt(r[COL.at - 1]),
+        fmt(r[COL.draftAt - 1]), r[COL.count - 1] || "",
+        fmt(r[COL.finalAt - 1]), phase === "done" ? num(meta, /최종 문장 (\d+)/) : "",
+        phase === "done" ? num(meta, /표현 (\d+)/) : (num(meta, /표현 (\d+)\)/) !== "" ? num(meta, /\(표현 (\d+)\)/) : ""),
+        num(meta, /화면이탈 (\d+)/), num(meta, /한글입력 (\d+)/), num(meta, /사전 (\d+)/) + (num(meta, /자동완성차단 (\d+)/) ? " (자동완성 " + num(meta, /자동완성차단 (\d+)/) + ")" : ""),
+        pick(meta, /소요 ([^|]+)/) === "-" ? "" : pick(meta, /소요 ([^|]+)/).replace(/조사|초안|최종/g, "").replace(/\s+/g, " ").trim(),
+        dup ? "중복" : "", hasRoster ? (roster[sid] ? (roster[sid] === String(r[COL.name - 1] || "").trim() ? "" : "이름 다름") : "명단에 없음") : "",
+        String(r[COL.pdf - 1] || ""), String(r[COL.finalPdf - 1] || "")
+      ]);
+    });
+    if (hasRoster) Object.keys(roster).forEach((sid) => { if (!seen[sid]) lines.push([classOf(sid), sid, roster[sid], "미접속", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]); });
+    lines.sort((a, b) => (Number(a[1]) - Number(b[1])) || (a[15] === "중복" ? 1 : -1));
+
+    const header = ["반", "학번", "이름", "상태", "첫 접속", "마지막 저장", "초안 제출", "초안 문장", "최종 제출", "최종 문장", "표현", "이탈", "한글", "사전", "소요(조사/초안/최종)", "중복", "명단 확인", "초안 PDF", "최종 PDF"];
+    let sh = ss.getSheetByName(ov.name || "총괄");
+    if (!sh) sh = ss.insertSheet(ov.name || "총괄");
+    sh.clear();
+    sh.getRange(1, 1, 1, header.length).setValues([header]).setFontWeight("bold").setBackground("#F2F4F7");
+    if (lines.length) {
+      sh.getRange(2, 1, lines.length, header.length).setValues(lines);
+      const colors = lines.map((l) => [STATUS_COLOR[l[3]] || "#FFFFFF"]);
+      sh.getRange(2, 4, lines.length, 1).setBackgrounds(colors);
+      const dupColors = lines.map((l) => [l[15] === "중복" ? "#FCE4E1" : "#FFFFFF"]);
+      sh.getRange(2, 16, lines.length, 1).setBackgrounds(dupColors);
+    }
+    sh.setFrozenRows(1); sh.setFrozenColumns(3);
+    [80, 60, 70, 90, 90, 90, 90, 60, 90, 60, 50, 50, 50, 50, 130, 50, 90, 200, 200].forEach((w, i) => sh.setColumnWidth(i + 1, w));
+    sh.getRange(1, header.length + 2).setValue("마지막 갱신 " + Utilities.formatDate(new Date(), "Asia/Seoul", "MM-dd HH:mm:ss"));
+
+    // 반별 요약 (학생 단위로 셈: 같은 학번의 여러 줄은 가장 앞선 상태 하나로)
+    const RANK = { "미접속": 0, "조사 중": 1, "초안 작성 중": 2, "초안 제출": 3, "최종 작성 중": 4, "최종 제출": 5 };
+    const best = {};
+    lines.forEach((l) => {
+      const k = l[1];
+      if (!best[k] || (RANK[l[3]] || 0) > (RANK[best[k].status] || 0)) best[k] = { cls: l[0], status: l[3], dup: best[k] ? best[k].dup : false };
+      if (l[15] === "중복") best[k].dup = true;
+    });
+    const byClass = {};
+    Object.keys(best).forEach((k) => {
+      const b = best[k];
+      const c = byClass[b.cls] || (byClass[b.cls] = { total: 0, on: 0, draft: 0, done: 0, dup: 0 });
+      c.total++;
+      if ((RANK[b.status] || 0) >= 1) c.on++;
+      if ((RANK[b.status] || 0) >= 3) c.draft++;
+      if ((RANK[b.status] || 0) >= 5) c.done++;
+      if (b.dup) c.dup++;
+    });
+    const sum = Object.keys(byClass).sort().map((k) => [k, byClass[k].total, byClass[k].on, byClass[k].draft, byClass[k].done, byClass[k].dup]);
+    let ssh = ss.getSheetByName(ov.summaryName || "반별 요약");
+    if (!ssh) ssh = ss.insertSheet(ov.summaryName || "반별 요약");
+    ssh.clear();
+    ssh.getRange(1, 1, 1, 6).setValues([["반", hasRoster ? "명단 인원" : "접속 인원(명단 없음)", "접속", "초안 제출", "최종 제출", "중복"]]).setFontWeight("bold").setBackground("#F2F4F7");
+    if (sum.length) ssh.getRange(2, 1, sum.length, 6).setValues(sum);
+    ssh.getRange(sum.length + 3, 1).setValue("마지막 갱신 " + Utilities.formatDate(new Date(), "Asia/Seoul", "MM-dd HH:mm:ss"));
+  } finally { try { lock.releaseLock(); } catch (e) {} }
+}
+
+// 수업 중 5분마다 자동 갱신하고 싶을 때 한 번 실행 (끝나면 removeOverviewTrigger)
+function installOverviewTrigger() {
+  removeOverviewTrigger();
+  ScriptApp.newTrigger("rebuildOverview").timeBased().everyMinutes(5).create();
+}
+function removeOverviewTrigger() {
+  ScriptApp.getProjectTriggers().forEach((t) => { if (t.getHandlerFunction() === "rebuildOverview") ScriptApp.deleteTrigger(t); });
+}
+
+/* ────────────────────────── 오류 기록 · PDF 다시 만들기 ────────────────────────── */
+
+function logError(where, err, extra) {
+  try {
+    const ss = SpreadsheetApp.openById(getLogSheet().getParent().getId());
+    let sh = ss.getSheetByName("오류");
+    if (!sh) { sh = ss.insertSheet("오류"); sh.appendRow(["시각", "위치", "오류", "상세"]); sh.setFrozenRows(1); }
+    sh.appendRow([new Date(), where, String(err && err.message || err), (String(err && err.stack || "").slice(0, 1500) + " | " + String(extra || "").slice(0, 300))]);
+  } catch (e) {}
+}
+
+// 학생 한 명의 초안 PDF(또는 최종 PDF)를 시트에 저장된 내용으로 다시 만듭니다. 편집기에서 학번을 넣어 실행하세요.
+// 예) regeneratePdf("10315", "draft")  /  regeneratePdf("10315", "final")
+function regeneratePdf(sid, kind) {
+  kind = kind || "draft";
+  const sh = draftSheet();
+  const rows = allRows(sh);
+  let idx = -1;
+  for (let i = 0; i < rows.length; i++) if (String(rows[i][COL.sid - 1]) === String(sid)) { idx = i; break; }
+  if (idx < 0) throw new Error("학번 " + sid + " 줄이 없습니다.");
+  const r = rows[idx];
+  let st = {}; try { st = JSON.parse(r[COL.json - 1] || "{}"); } catch (e) {}
+  const bank = parseBank(PropertiesService.getScriptProperties().getProperty("bank") || "[]");
+  const d = { sid: String(r[COL.sid - 1]), name: String(r[COL.name - 1] || ""), key: String(r[COL.key - 1] || ""), title: st.title || "영어 쓰기 수행평가", subtitle: st.subtitle || "",
+    brainstorm: String(r[COL.brain - 1] || ""), draft: String(r[COL.draft - 1] || ""), final: String(st.final || ""), meta: String(r[COL.meta - 1] || ""), bank: bank,
+    dup: String(r[COL.dup - 1] || "") === "Y" };
+  const pdf = savePdf(d, kind);   // 오류가 나면 편집기에 그대로 표시됩니다
+  sh.getRange(idx + 2, kind === "final" ? COL.finalPdf : COL.pdf).setValue(pdf.getUrl());
+  Logger.log("만들어졌습니다: " + pdf.getUrl());
+  return pdf.getUrl();
+}
+
+/* ────────────────────────── 메일 보내기 ────────────────────────── */
+
+function sendMail(d, files) {
+  const subject = CFG.subjectPrefix + " " + d.sid + " " + d.name;
+  const bodyText =
+    "학번: " + d.sid + "\n이름: " + d.name + "\n" +
+    "제출: " + Utilities.formatDate(new Date(), "Asia/Seoul", "yyyy-MM-dd HH:mm") + "\n\n" +
+    "[자동 집계]\n" + (d.meta || "-") + "\n\n" +
+    "[최종본]\n" + (d.final || "(비어 있음)") + "\n";
+  const opts = { to: CFG.notifyEmail, subject: subject, body: bodyText };
+  if (CFG.attachToEmail) opts.attachments = files.map(function (f) { return f.getAs(f.getMimeType()); });
+  MailApp.sendEmail(opts);
+}
+
+/* ────────────────────────── 도우미 ────────────────────────── */
+
+function cut(s, n) { s = String(s); return s.length > n ? s.slice(0, n) + " …(생략)" : s; }
+function textOut(msg) { return ContentService.createTextOutput(msg).setMimeType(ContentService.MimeType.TEXT); }
+
+/* ────────────────────────── 테스트 ──────────────────────────
+   함수 목록에서 testSubmit 을 고르고 "실행"을 누르면 샘플이 하나 처리됩니다. */
+
+function testDraft() {
+  const reg = loadOrRegister("10315", "김하늘", "");
+  const bank = JSON.stringify([{ label: "rely on", source: "\\brel(?:y|ies|ied|ying)\\s+on\\b", flags: "i" }, { label: "a place where", source: "\\bplace\\s+where\\b", flags: "i" }]);
+  doPost({ parameter: { token: CFG.token, phase: "draft", sid: "10315", name: "김하늘", key: reg.key,
+    title: "Good for All of Us: A Place for Everyone", subtitle: "1학년 2학기 영어 쓰기 수행평가", bank: bank,
+    brainstorm: "[Step 1]\nOpening: 1-4\n\n[Step 2]\n1. Place 학교 도서관\n2. Problem 입구에 계단이 있다",
+    draft: "Part 1. Opening\n(1) Our school library is a place where many students study.\n(2) Many students rely on it.\n(3) \n\nPart 2. Suggestions & Expected Effects\n(4) First, we should build a ramp.",
+    meta: "초안 문장 3 (표현 2) | 화면이탈 0회 | 한글입력 0회 | 한글선택 0회 | 대량입력 0회 | 사전 1회 [경사로→ramp]",
+    data: JSON.stringify({ sid: "10315", name: "김하늘", phase: "draftDone", savedAt: Date.now(), draft: [["Our school library is a place where many students study.", "Many students rely on it.", ""], ["First, we should build a ramp.", "", "", ""], ["", ""]], final: "" }) } });
+  Logger.log(JSON.stringify(loadOrRegister("10315", "김하늘", reg.key)).slice(0, 200));
+}
+
+function testSubmit() {
+  const reg = loadOrRegister("10315", "김하늘", "");
+  const bank = JSON.stringify([{ label: "rely on", source: "\\brel(?:y|ies|ied|ying)\\s+on\\b", flags: "i" }, { label: "make it easier for A to B", source: "\\bmake\\s+it\\s+easier\\b", flags: "i" }, { label: "regardless of", source: "\\bregardless\\s+of\\b", flags: "i" }]);
+  doPost({ parameter: {
+    token: CFG.token, phase: "final", key: reg.key,
+    sid: "10315", name: "김하늘",
+    title: "Good for All of Us: A Place for Everyone",
+    subtitle: "1학년 2학기 영어 쓰기 수행평가", bank: bank,
+    brainstorm: "[Step 1]\nOpening: 1-4\n\n[Step 2]\n1. Place 학교 도서관\n2. Problem 입구에 계단이 있다",
+    draft: "Part 1. Opening\n(1) Our school library is a place where many students study.\n(2) Many students rely on it.",
+    final: "Our school library is a place where many students study. Many students rely on it. However, the entrance has three steps. First, we should build a ramp. This will make it easier for everyone to enter. They will benefit everyone, regardless of age.",
+    meta: "최종 문장 6 | 표현 3/9 (rely on, make it easier for A to B, regardless of) | 초안 문장 2 (표현 1) | 화면이탈 1회 [14:02 탭/앱 전환(초안)] | 한글입력 0회 | 한글선택 0회 | 대량입력 0회 | 사전 2회 [경사로→ramp, 표지판→sign] | 환경 홈화면앱 | 소요 조사 12분 / 초안 18분 / 최종 15분"
+  }});
+}

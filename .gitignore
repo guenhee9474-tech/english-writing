@@ -1,0 +1,6 @@
+gas/.clasp.json
+.clasprc.json
+node_modules/
+__pycache__/
+tests/*.png
+.DS_Store
