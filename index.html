@@ -502,12 +502,12 @@
    교사용 설정 (여기만 고치면 됩니다)
    ════════════════════════════════════════════════════════════════ */
 const CONFIG = {
-  version: "2026-09-08 (ID 로그인판)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
+  version: "2026-09-09 (기기 열쇠판)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
   title: "Good for All of Us: A Place for Everyone",
   subtitle: "1학년 2학기 영어 쓰기 수행평가",
 
   // 단계별 제한 시간(분). 주소 뒤 ?r=20&d=25&f=15 로 바꿀 수 있습니다.
-  phases: { research: 20, draft: 25, final: 20 },
+  phases: { research: 15, draft: 20, final: 20 },
   autosaveSec: 60,             // 작성 중 서버 자동 저장 간격(초). 0이면 제출 때만 서버에 보냅니다.
   autoSubmitWhenTimeUp: true,  // 시간이 끝나면 자동으로 다음 단계/제출
   requiredSentences: 9,        // 최종본 필요 문장 수
@@ -731,7 +731,7 @@ function renderStatic() {
     "초안과 최종본을 쓰는 동안 다른 앱이나 탭으로 이동하면 횟수와 시각이 제출물에 기록됩니다.",
     "글은 자동 저장됩니다. 실수로 닫혀도 같은 학번과 이름으로 다시 시작하면 이어집니다.",
     "1회차는 조사·브레인스토밍 → 초안, 2회차는 최종본입니다. 2회차에는 1회차 내용을 고칠 수 없습니다.",
-    "단계마다 제한 시간이 있고, 시간이 끝나면 자동으로 다음 단계로 넘어가거나 제출됩니다."
+    "제한 시간은 조사 " + ((CONFIG.phases || {}).research || 15) + "분, 초안 " + ((CONFIG.phases || {}).draft || 20) + "분, 최종 " + ((CONFIG.phases || {}).final || 20) + "분이고, 시간이 끝나면 자동으로 다음 단계로 넘어가거나 제출됩니다."
   ].map((r) => "<li>" + r + "</li>").join("");
 
   $("d1").textContent = CONFIG.desc1 || "";
@@ -866,6 +866,10 @@ const PHASE_LABEL = { research: "조사·브레인스토밍", draft: "초안 쓰
 const urlQ = new URLSearchParams(location.search);
 const urlMin = { research: +urlQ.get("r") || 0, draft: +urlQ.get("d") || 0, final: +urlQ.get("f") || 0 };
 let finalOpen = true;          // 서버에서 closeFinal() 로 닫아 두면 false
+// 기기 열쇠: 첫 로그인 때 서버가 발급해 이 기기에만 보관. 이후 모든 요청에 붙는다.
+function getKey(sid) { try { return localStorage.getItem("czkey:" + sid) || ""; } catch (e) { return ""; } }
+function setKey(sid, key) { try { if (key) localStorage.setItem("czkey:" + sid, key); } catch (e) {} }
+let dupWarned = false;
 let serverInfo = null;         // 로그인 때 서버가 준 정보
 let dirty = false;             // 마지막 서버 저장 이후 바뀐 것이 있는지
 let autosaveTimer = null;
@@ -1188,6 +1192,7 @@ function jsonp(params, timeoutMs) {
     window[cb] = (data) => { done = true; cleanup(); resolve(data); };
     s.onerror = () => { if (!done) { done = true; cleanup(); reject(new Error("load")); } };
     const q = new URLSearchParams(params); q.set("callback", cb); q.set("token", CONFIG.submit.token || "");
+    if (state.sid && !q.has("key")) q.set("key", getKey(state.sid));
     s.src = url + (url.includes("?") ? "&" : "?") + q.toString();
     document.head.appendChild(s);
     setTimeout(() => { if (!done) { done = true; cleanup(); reject(new Error("timeout")); } }, timeoutMs || 6000);
@@ -1197,11 +1202,12 @@ async function postToServer(kind, reason) {
   const cfg = CONFIG.submit;
   if (!cfg.scriptUrl) return null;
   const body = new URLSearchParams();
-  body.append("token", cfg.token || ""); body.append("phase", kind);
+  body.append("token", cfg.token || ""); body.append("phase", kind); body.append("key", getKey(state.sid));
   body.append("sid", state.sid); body.append("name", state.name);
   body.append("title", CONFIG.title); body.append("subtitle", CONFIG.subtitle);
   body.append("brainstorm", buildBrainstorm()); body.append("draft", buildDraft());
   body.append("final", state.final); body.append("meta", buildMeta(reason, kind));
+  body.append("bank", JSON.stringify(BANK.map((w) => ({ label: w.label, source: w.re.source, flags: w.re.flags }))));
   body.append("data", JSON.stringify(state));
   await fetch(cfg.scriptUrl, { method: "POST", mode: "no-cors", body, keepalive: true });
   // 저장 확인 (읽어서 시각 비교)
@@ -1213,15 +1219,16 @@ async function postToServer(kind, reason) {
 }
 // 로그인: 서버에 저장된 상태를 가져온다. { found, data, finalAt, finalOpen, reason }
 async function fetchRemote(sid, name) {
-  const r = await jsonp({ action: "load", sid, name }, 7000);
+  const r = await jsonp({ action: "load", sid, name, key: getKey(sid) }, 8000);
   if (!r) return null;
   if (typeof r.finalOpen === "boolean") finalOpen = r.finalOpen;
+  if (r.key) setKey(sid, r.key);          // 새로 발급되었거나 확인된 열쇠
   let data = null;
   if (r.found && r.data) {
     try { data = typeof r.data === "string" ? JSON.parse(r.data) : r.data; } catch (e) { data = null; }
     if (data && String(data.sid) !== String(sid)) data = null;
   }
-  return { data, finalAt: r.finalAt || null, reason: r.reason || "", error: r.error || "" };
+  return { data, finalAt: r.finalAt || null, reason: r.reason || "", error: r.error || "", dup: !!r.dup, name: r.name || "" };
 }
 
 // 작성 중 자동 저장 (서버). 바뀐 것이 있을 때만 보낸다.
@@ -1233,7 +1240,7 @@ async function autosaveToServer(force) {
   dirty = false;
   try {
     const body = new URLSearchParams();
-    body.append("token", cfg.token || ""); body.append("phase", "save");
+    body.append("token", cfg.token || ""); body.append("phase", "save"); body.append("key", getKey(state.sid));
     body.append("sid", state.sid); body.append("name", state.name);
     body.append("meta", "자동저장 " + (PHASE_LABEL[state.phase] || state.phase) + " | 초안 문장 " + draftSentenceCount());
     body.append("brainstorm", buildBrainstorm()); body.append("draft", buildDraft()); body.append("final", state.final);
@@ -1520,6 +1527,7 @@ function enterApp() {
     hangulFlag[el.id || (el.dataset.part + ":" + el.dataset.line)] = HANGUL.test(el.value);
   });
   applyPhase(); save(); startTick(); ensureFsSoon(); startAutosave(); dirty = true;
+  if (dupWarned) showBanner("이 학번은 이미 다른 기기에서 사용 중입니다. 내 글은 따로 저장되지만, 선생님께 꼭 알려 주세요.", true);
   window.scrollTo(0, 0);
 }
 function beginFinal() {
@@ -1543,11 +1551,8 @@ async function start() {
   }
   $("startBtn").disabled = false; note.textContent = "";
 
-  // 학번은 있는데 이름이 다르면 다른 학생의 기록일 수 있으므로 막는다
-  if (remote && remote.reason === "NAME_MISMATCH") {
-    note.textContent = "이 학번으로 저장된 이름과 다릅니다. 지난번에 입력한 이름과 똑같이 써 주세요."; note.className = "gate-note error";
-    return;
-  }
+  // 같은 학번이 이미 다른 기기에 등록되어 있으면: 막지 않고 따로 저장하되, 학생과 선생님이 알 수 있게 표시
+  dupWarned = !!(remote && remote.dup);
   if (!serverOk && CONFIG.submit.scriptUrl && !local) {
     note.textContent = "서버에 연결할 수 없어 이 기기의 저장 내용만 사용합니다."; note.className = "gate-note";
   }
@@ -1555,6 +1560,7 @@ async function start() {
   const chosen = pickState(local, remote && remote.data);
   if (chosen) { restoreState(chosen); if (name && name !== state.name) state.name = name; }
   else newState(sid, name);
+  if (remote && remote.name && remote.data) state.name = remote.name;   // 서버에 등록된 이름을 기준으로
   state.env = ENV.standalone ? "home" : "browser";
   if (remote && remote.finalAt && !state.submitted) { state.submitted = true; state.phase = "done"; state.sent = true; if (!state.submittedAt) state.submittedAt = new Date(remote.finalAt).getTime() || Date.now(); }
   save();
