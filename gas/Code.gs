@@ -696,7 +696,20 @@ function num(text, re) { const m = String(text || "").match(re); return m ? Numb
 /* ────────────────────────── 총괄 시트 ────────────────────────── */
 
 const STATUS_LABEL = { research: "조사 중", draft: "초안 작성 중", draftDone: "초안 제출", final: "최종 작성 중", done: "최종 제출" };
-const STATUS_COLOR = { "미접속": "#EEEEEE", "조사 중": "#E9F0FC", "초안 작성 중": "#E9F0FC", "초안 제출": "#FFF4CC", "최종 작성 중": "#FFF4CC", "최종 제출": "#DDF2EC" };
+const STATUS_COLOR = { "미접속": "#EEEEEE", "조사 중": "#E9F0FC", "초안 작성 중": "#DCE7FA", "초안 제출": "#FFF4CC", "최종 작성 중": "#FFE9B0", "최종 제출": "#DDF2EC" };
+
+/* ── 색 규칙 ────────────────────────────────────────────────────
+   숫자가 커질수록 진해집니다. 흰 칸 = 아무 일 없음. 선생님이 훑어볼 때 눈에 걸리게 하는 것이 목적입니다. */
+const C_OK = "#FFFFFF", C_W1 = "#FFF8DC", C_W2 = "#FFE0B2", C_W3 = "#F8C9C4";
+const C_HEAD = "#1B2436", C_HEADTX = "#FFFFFF", C_SUB = "#F2F4F7", C_STALE = "#F8C9C4", C_DUP = "#FCE4E1";
+
+// 이탈: 1-2회 연노랑, 3-5회 주황, 6회 이상 빨강
+function leaveColor(n) { n = Number(n) || 0; return n === 0 ? C_OK : n <= 2 ? C_W1 : n <= 5 ? C_W2 : C_W3; }
+// 한글 입력·대량 입력처럼 한 번만 나와도 눈에 띄어야 하는 것
+function strictColor(n) { n = Number(n) || 0; return n === 0 ? C_OK : n <= 2 ? C_W2 : C_W3; }
+function dictColor(n) { n = Number(n) || 0; return n <= 20 ? C_OK : n <= 50 ? C_W1 : C_W2; }
+// 반별 요약의 "이탈 있는 학생" 처럼 사람 수를 셀 때 (한 반 30명 기준)
+function countColor(n) { n = Number(n) || 0; return n === 0 ? C_OK : n <= 3 ? C_W1 : n <= 8 ? C_W2 : C_W3; }
 
 function classOf(sid) {
   const m = String(sid).match(/^(\d)(\d{2})/);
@@ -704,7 +717,87 @@ function classOf(sid) {
 }
 function fmt(d) { return (d instanceof Date && !isNaN(d)) ? Utilities.formatDate(d, "Asia/Seoul", "MM-dd HH:mm") : (d ? String(d) : ""); }
 
-// "총괄" 탭과 "반별 요약" 탭을 처음부터 다시 씁니다. 초안·최종 제출 때마다 자동으로, 또는 직접 실행해서 갱신.
+/* 학생 현황 한 판을 그립니다. "총괄"(전체)과 반별 탭이 같은 함수를 씁니다.
+   수업 중에 훑어보는 화면이므로 왼쪽부터 [이름 · 상태 · 이탈 · 한글 · 대량]을 놓고,
+   숫자가 커질수록 칸 색이 진해집니다. 제출 시각·PDF 같은 것은 오른쪽에 둡니다. */
+function writeStatusSheet(ss, sheetName, title, recs, withClass) {
+  const HEAD = (withClass ? ["반"] : []).concat(
+    ["학번", "이름", "상태", "이탈", "한글", "대량", "사전", "초안 문장", "표현", "최종 문장",
+     "마지막 저장", "조용함", "첫 접속", "초안 제출", "최종 제출", "소요", "확인", "초안 PDF", "최종 PDF"]);
+  const WIDTH = (withClass ? [80] : []).concat(
+    [64, 80, 92, 52, 52, 52, 52, 72, 52, 72, 100, 64, 100, 100, 100, 120, 84, 150, 150]);
+
+  let sh = ss.getSheetByName(sheetName);
+  let fresh = false;
+  if (!sh) { sh = ss.insertSheet(sheetName); fresh = true; }
+  sh.clear();
+
+  const stamp = Utilities.formatDate(new Date(), "Asia/Seoul", "MM-dd HH:mm:ss");
+  const on = recs.filter((r) => r.status !== "미접속").length;
+  const leaved = recs.filter((r) => Number(r.leave) > 0).length;
+  const drafted = recs.filter((r) => r.phase === "draftDone" || r.phase === "final" || r.phase === "done").length;
+  const doneN = recs.filter((r) => r.phase === "done").length;
+  const staleN = recs.filter((r) => r.stale).length;
+
+  // 1행: 제목 + 갱신 시각 / 2행: 한 줄 요약
+  sh.getRange(1, 1, 1, HEAD.length).merge().setValue(title + "  ·  마지막 갱신 " + stamp)
+    .setFontSize(13).setFontWeight("bold").setFontColor(C_HEADTX).setBackground(C_HEAD)
+    .setVerticalAlignment("middle").setHorizontalAlignment("left");
+  sh.setRowHeight(1, 30);
+  sh.getRange(2, 1, 1, HEAD.length).merge().setValue(
+    "인원 " + recs.length + "  ·  접속 " + on + "  ·  초안 제출 " + drafted + "  ·  최종 제출 " + doneN +
+    "  ·  이탈 있는 학생 " + leaved + "  ·  3분 이상 조용함 " + staleN)
+    .setFontSize(11).setBackground(C_SUB).setVerticalAlignment("middle");
+  sh.setRowHeight(2, 24);
+
+  // 3행: 열 이름
+  sh.getRange(3, 1, 1, HEAD.length).setValues([HEAD])
+    .setFontWeight("bold").setFontColor(C_HEADTX).setBackground("#3A4761")
+    .setHorizontalAlignment("center").setVerticalAlignment("middle");
+  sh.setRowHeight(3, 26);
+
+  const body = recs.map((r) => (withClass ? [r.cls] : []).concat(
+    [r.sid, r.name, r.status, r.leave, r.hangul, r.burst, r.dict, r.dCount, r.expr, r.fCount,
+     r.at, r.stale ? r.stale + "분" : "", r.reg, r.draftAt, r.finalAt, r.spent,
+     (r.dup ? "중복" : "") + (r.dup && r.note ? " · " : "") + r.note, r.pdf, r.finalPdf]));
+
+  if (body.length) {
+    const rng = sh.getRange(4, 1, body.length, HEAD.length);
+    rng.setValues(body);
+    // 색은 한 번에 칠합니다 (칸마다 부르면 갱신이 느려집니다)
+    const o = withClass ? 1 : 0;
+    const bg = recs.map((r) => {
+      const row = new Array(HEAD.length).fill(C_OK);
+      row[o + 2] = STATUS_COLOR[r.status] || C_OK;      // 상태
+      row[o + 3] = leaveColor(r.leave);                 // 이탈
+      row[o + 4] = strictColor(r.hangul);               // 한글
+      row[o + 5] = strictColor(r.burst);                // 대량
+      row[o + 6] = dictColor(r.dict);                   // 사전
+      if (r.stale) { row[o + 10] = C_STALE; row[o + 11] = C_STALE; }   // 마지막 저장 / 조용함
+      if (r.dup || r.note) row[o + 16] = C_DUP;         // 확인
+      return row;
+    });
+    rng.setBackgrounds(bg);
+    rng.setFontColors(recs.map((r) => {
+      const row = new Array(HEAD.length).fill("#1B2436");
+      if (Number(r.leave) > 5) row[o + 3] = "#B42318";
+      if (Number(r.hangul) > 2) row[o + 4] = "#B42318";
+      return row;
+    }));
+    // 숫자 칸은 가운데로, 이름은 왼쪽
+    sh.getRange(4, o + 4, body.length, 7).setHorizontalAlignment("center");
+    sh.getRange(4, o + 1, body.length, 1).setHorizontalAlignment("center");
+    sh.getRange(4, 1, body.length, HEAD.length).setVerticalAlignment("middle");
+    if (body.length > 1) sh.getRange(4, 1, body.length, HEAD.length).setBorder(null, null, null, null, null, true, "#E4E8EF", SpreadsheetApp.BorderStyle.SOLID);
+  }
+  sh.setFrozenRows(3);
+  sh.setFrozenColumns(withClass ? 3 : 2);
+  // 열 너비는 clear() 로 지워지지 않으므로 시트를 처음 만들 때만 정합니다 (갱신이 1~2분마다 도니까)
+  if (fresh) WIDTH.forEach((w, i) => sh.setColumnWidth(i + 1, w));
+  return sh;
+}
+
+// "총괄"·반별 탭·"반별 요약"을 처음부터 다시 씁니다. 학생 요청이 오면 scheduleOverview() 가 알아서 부릅니다.
 function rebuildOverview() {
   const lock = LockService.getScriptLock();
   try { lock.waitLock(30000); } catch (e) { return; }
@@ -721,71 +814,85 @@ function rebuildOverview() {
     }
     const hasRoster = Object.keys(roster).length > 0;
 
-    const lines = [];
+    // 학생 한 명 = 기록 하나
+    const recs = [];
     const seen = {};
+    const now = Date.now();
     rows.forEach((r) => {
       const sid = String(r[COL.sid - 1] || "").trim(); if (!sid) return;
       seen[sid] = true;
       const meta = String(r[COL.meta - 1] || "");
       const phase = String(r[COL.phase - 1] || "research");
-      const dup = String(r[COL.dup - 1] || "") === "Y";
-      lines.push([
-        classOf(sid), sid, String(r[COL.name - 1] || ""), STATUS_LABEL[phase] || phase,
-        fmt(r[COL.reg - 1]), fmt(r[COL.at - 1]),
-        fmt(r[COL.draftAt - 1]), r[COL.count - 1] || "",
-        fmt(r[COL.finalAt - 1]), phase === "done" ? num(meta, /최종 문장 (\d+)/) : "",
-        phase === "done" ? num(meta, /표현 (\d+)/) : num(meta, /\(표현 (\d+)\)/),
-        num(meta, /화면이탈 (\d+)/), num(meta, /한글입력 (\d+)/), num(meta, /사전 (\d+)/) + (num(meta, /자동완성차단 (\d+)/) ? " (자동완성 " + num(meta, /자동완성차단 (\d+)/) + ")" : ""),
-        pick(meta, /소요 ([^|]+)/) === "-" ? "" : pick(meta, /소요 ([^|]+)/).replace(/조사|초안|최종/g, "").replace(/\s+/g, " ").trim(),
-        dup ? "중복" : "", hasRoster ? (roster[sid] ? (roster[sid] === String(r[COL.name - 1] || "").trim() ? "" : "이름 다름") : "명단에 없음") : "",
-        String(r[COL.pdf - 1] || ""), String(r[COL.finalPdf - 1] || "")
-      ]);
+      const name = String(r[COL.name - 1] || "");
+      const at = r[COL.at - 1];
+      const writing = phase === "research" || phase === "draft" || phase === "final";
+      // 쓰고 있어야 하는데 3분 넘게 저장이 없으면 기기가 끊어진 것일 수 있습니다.
+      const quietMin = (at instanceof Date && !isNaN(at)) ? Math.floor((now - at.getTime()) / 60000) : -1;
+      recs.push({
+        cls: classOf(sid), sid: sid, name: name, status: STATUS_LABEL[phase] || phase, phase: phase,
+        leave: num(meta, /화면이탈 (\d+)/), hangul: num(meta, /한글입력 (\d+)/), hangulSel: num(meta, /한글선택 (\d+)/),
+        burst: num(meta, /대량입력 (\d+)/), auto: num(meta, /자동완성차단 (\d+)/), dict: num(meta, /사전 (\d+)/),
+        dCount: r[COL.count - 1] || "", fCount: phase === "done" ? num(meta, /최종 문장 (\d+)/) : "",
+        expr: phase === "done" ? num(meta, /표현 (\d+)/) : num(meta, /\(표현 (\d+)\)/),
+        reg: fmt(r[COL.reg - 1]), at: fmt(at), draftAt: fmt(r[COL.draftAt - 1]), finalAt: fmt(r[COL.finalAt - 1]),
+        spent: pick(meta, /소요 ([^|]+)/) === "-" ? "" : pick(meta, /소요 ([^|]+)/).replace(/조사|초안|최종/g, "").replace(/\s+/g, " ").trim(),
+        dup: String(r[COL.dup - 1] || "") === "Y",
+        note: hasRoster ? (roster[sid] ? (roster[sid] === name.trim() ? "" : "이름 다름") : "명단에 없음") : "",
+        stale: writing && quietMin >= 3 ? quietMin : 0,
+        pdf: String(r[COL.pdf - 1] || ""), finalPdf: String(r[COL.finalPdf - 1] || "")
+      });
     });
-    if (hasRoster) Object.keys(roster).forEach((sid) => { if (!seen[sid]) lines.push([classOf(sid), sid, roster[sid], "미접속", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]); });
-    lines.sort((a, b) => (Number(a[1]) - Number(b[1])) || ((a[15] === "중복" ? 1 : 0) - (b[15] === "중복" ? 1 : 0)));
+    if (hasRoster) Object.keys(roster).forEach((sid) => {
+      if (seen[sid]) return;
+      recs.push({ cls: classOf(sid), sid: sid, name: roster[sid], status: "미접속", phase: "", leave: "", hangul: "", hangulSel: "",
+        burst: "", auto: "", dict: "", dCount: "", fCount: "", expr: "", reg: "", at: "", draftAt: "", finalAt: "",
+        spent: "", dup: false, note: "", stale: 0, pdf: "", finalPdf: "" });
+    });
+    recs.sort((a, b) => (Number(a.sid) - Number(b.sid)) || ((a.dup ? 1 : 0) - (b.dup ? 1 : 0)));
 
-    const header = ["반", "학번", "이름", "상태", "첫 접속", "마지막 저장", "초안 제출", "초안 문장", "최종 제출", "최종 문장", "표현", "이탈", "한글", "사전", "소요(조사/초안/최종)", "중복", "명단 확인", "초안 PDF", "최종 PDF"];
-    let sh = ss.getSheetByName(ov.name || "총괄");
-    let fresh = false;
-    if (!sh) { sh = ss.insertSheet(ov.name || "총괄"); fresh = true; }
-    sh.clear();
-    sh.getRange(1, 1, 1, header.length).setValues([header]).setFontWeight("bold").setBackground("#F2F4F7");
-    if (lines.length) {
-      sh.getRange(2, 1, lines.length, header.length).setValues(lines);
-      const colors = lines.map((l) => [STATUS_COLOR[l[3]] || "#FFFFFF"]);
-      sh.getRange(2, 4, lines.length, 1).setBackgrounds(colors);
-      const dupColors = lines.map((l) => [l[15] === "중복" ? "#FCE4E1" : "#FFFFFF"]);
-      sh.getRange(2, 16, lines.length, 1).setBackgrounds(dupColors);
-    }
-    sh.setFrozenRows(1); sh.setFrozenColumns(3);
-    // 열 너비는 sh.clear() 로 지워지지 않으므로 시트를 처음 만들 때만 설정합니다(갱신이 자주 도니까).
-    if (fresh) [80, 60, 70, 90, 90, 90, 90, 60, 90, 60, 50, 50, 50, 50, 130, 50, 90, 200, 200].forEach((w, i) => sh.setColumnWidth(i + 1, w));
-    sh.getRange(1, header.length + 2).setValue("마지막 갱신 " + Utilities.formatDate(new Date(), "Asia/Seoul", "MM-dd HH:mm:ss"));
+    writeStatusSheet(ss, ov.name || "총괄", "전체", recs, true);
+
+    // 반별 탭: 수업 들어가서 그 반 탭만 보면 됩니다
+    const classes = {};
+    recs.forEach((r) => { (classes[r.cls] || (classes[r.cls] = [])).push(r); });
+    Object.keys(classes).sort().forEach((cls) => {
+      if (cls === "기타") return;
+      writeStatusSheet(ss, cls, cls, classes[cls], false);
+    });
 
     // 반별 요약 (학생 단위로 셈: 같은 학번의 여러 줄은 가장 앞선 상태 하나로)
     const RANK = { "미접속": 0, "조사 중": 1, "초안 작성 중": 2, "초안 제출": 3, "최종 작성 중": 4, "최종 제출": 5 };
     const best = {};
-    lines.forEach((l) => {
-      const k = l[1];
-      if (!best[k] || (RANK[l[3]] || 0) > (RANK[best[k].status] || 0)) best[k] = { cls: l[0], status: l[3], dup: best[k] ? best[k].dup : false };
-      if (l[15] === "중복") best[k].dup = true;
+    recs.forEach((r) => {
+      if (!best[r.sid] || (RANK[r.status] || 0) > (RANK[best[r.sid].status] || 0)) best[r.sid] = { cls: r.cls, status: r.status, dup: best[r.sid] ? best[r.sid].dup : false, leave: r.leave };
+      if (r.dup) best[r.sid].dup = true;
+      if (Number(r.leave) > Number(best[r.sid].leave || 0)) best[r.sid].leave = r.leave;
     });
     const byClass = {};
     Object.keys(best).forEach((k) => {
       const b = best[k];
-      const c = byClass[b.cls] || (byClass[b.cls] = { total: 0, on: 0, draft: 0, done: 0, dup: 0 });
+      const c = byClass[b.cls] || (byClass[b.cls] = { total: 0, on: 0, draft: 0, done: 0, dup: 0, leave: 0 });
       c.total++;
       if ((RANK[b.status] || 0) >= 1) c.on++;
       if ((RANK[b.status] || 0) >= 3) c.draft++;
       if ((RANK[b.status] || 0) >= 5) c.done++;
       if (b.dup) c.dup++;
+      if (Number(b.leave) > 0) c.leave++;
     });
-    const sum = Object.keys(byClass).sort().map((k) => [k, byClass[k].total, byClass[k].on, byClass[k].draft, byClass[k].done, byClass[k].dup]);
+    const sum = Object.keys(byClass).sort().map((k) => [k, byClass[k].total, byClass[k].on, byClass[k].draft, byClass[k].done, byClass[k].leave, byClass[k].dup]);
     let ssh = ss.getSheetByName(ov.summaryName || "반별 요약");
-    if (!ssh) ssh = ss.insertSheet(ov.summaryName || "반별 요약");
+    let sfresh = false;
+    if (!ssh) { ssh = ss.insertSheet(ov.summaryName || "반별 요약"); sfresh = true; }
     ssh.clear();
-    ssh.getRange(1, 1, 1, 6).setValues([["반", hasRoster ? "명단 인원" : "접속 인원(명단 없음)", "접속", "초안 제출", "최종 제출", "중복"]]).setFontWeight("bold").setBackground("#F2F4F7");
-    if (sum.length) ssh.getRange(2, 1, sum.length, 6).setValues(sum);
+    const sumHead = ["반", hasRoster ? "명단 인원" : "접속 인원(명단 없음)", "접속", "초안 제출", "최종 제출", "이탈 있는 학생", "중복"];
+    ssh.getRange(1, 1, 1, sumHead.length).setValues([sumHead]).setFontWeight("bold").setFontColor(C_HEADTX).setBackground(C_HEAD);
+    if (sum.length) {
+      ssh.getRange(2, 1, sum.length, sumHead.length).setValues(sum);
+      ssh.getRange(2, 2, sum.length, sumHead.length - 1).setHorizontalAlignment("center");
+      ssh.getRange(2, 6, sum.length, 1).setBackgrounds(sum.map((x) => [countColor(x[5])]));
+    }
+    ssh.setFrozenRows(1);
+    if (sfresh) [90, 90, 60, 80, 80, 100, 60].forEach((w, i) => ssh.setColumnWidth(i + 1, w));
     ssh.getRange(sum.length + 3, 1).setValue("마지막 갱신 " + Utilities.formatDate(new Date(), "Asia/Seoul", "MM-dd HH:mm:ss"));
   } finally { try { lock.releaseLock(); } catch (e) {} }
 }

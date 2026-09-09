@@ -226,6 +226,50 @@ def check_server_file():
 
 check_server_file()
 
+# ── T0b. 선생님 현황 화면 검사 ─────────────────────────────────
+# 색을 칠하는 열 위치가 한 칸 어긋나면 총괄에 엉뚱한 색이 찍힌다. 위치를 직접 맞춰 본다.
+def check_status_sheet():
+    print('T0b 선생님 현황 화면(총괄·반별 탭) 검사')
+    gs = open(os.path.join(BASE, '..', 'gas', 'Code.gs'), encoding='utf-8').read()
+    check('현황 화면을 그리는 함수가 있다', 'function writeStatusSheet' in gs)
+    check('반별 탭을 만든다', 'writeStatusSheet(ss, cls, cls,' in gs,
+          '수업 들어가서 그 반 탭만 보면 되도록')
+    check('전체 탭도 만든다', 'writeStatusSheet(ss, ov.name || "총괄", "전체"' in gs)
+    check('이탈이 늘면 색이 진해진다', 'function leaveColor' in gs and 'C_W1' in gs and 'C_W3' in gs)
+    check('기기가 조용하면 표시된다', 'quietMin >= 3' in gs,
+          '쓰고 있어야 하는데 3분 넘게 저장이 없으면 연결이 끊어진 것')
+    check('색을 한 번에 칠한다 (갱신 속도)', gs.count('rng.setBackgrounds(bg);') == 1,
+          '칸마다 칠하면 1~2분마다 도는 갱신이 느려진다')
+
+    seg = gs[gs.index('function writeStatusSheet'):gs.index('function rebuildOverview')]
+    def arr(after):
+        i = seg.index(after); j = seg.index('[', i); d = 0
+        for k in range(j, len(seg)):
+            if seg[k] == '[': d += 1
+            elif seg[k] == ']':
+                d -= 1
+                if d == 0: return seg[j + 1:k]
+        return ''
+    head = ['반'] + [x.strip().strip('"') for x in arr('["학번", "이름"').split(',')]
+    body = ['r.cls'] + [x.strip() for x in arr('[r.sid, r.name').split(',')]
+    check('열 이름 수와 본문 값 수가 같다', len(head) == len(body), str(len(head)) + ' vs ' + str(len(body)))
+    want = {2: '상태', 3: '이탈', 4: '한글', 5: '대량', 6: '사전', 10: '마지막 저장', 11: '조용함', 16: '확인'}
+    bad = [str(n) + ':' + head[1 + n] + '(기대 ' + w + ')' for n, w in want.items() if head[1 + n] != w]
+    check('색을 칠하는 열 위치가 맞다', not bad, bad)
+    check('가운데 정렬 범위가 숫자 칸이다', head[4] == '이탈' and head[10] == '최종 문장',
+          head[4] + ' ~ ' + head[10])
+
+    # 페이지가 이탈 횟수를 자동 저장에 실어 보내는지 (안 보내면 수업 중 이탈 칸이 계속 빈다)
+    check('자동 저장이 이탈 횟수를 보낸다',
+          'function buildLiveMeta' in html and 'body.append("meta", buildLiveMeta());' in html,
+          '이것이 없으면 제출 전까지 총괄의 이탈 칸이 비어 있다')
+    seg2 = html[html.index('function buildLiveMeta'):html.index('function buildMeta')]
+    for label in ['화면이탈 ', '한글입력 ', '대량입력 ', '사전 ', '소요 ']:
+        check('자동 저장에 "' + label.strip() + '" 이 들어간다', label in seg2)
+    check('이탈이 생기면 바로 보낸다', 'function flushSoon' in html and 'flushSoon();' in html)
+
+check_status_sheet()
+
 def new_page(b):
     ctx = b.new_context(viewport={'width': 1180, 'height': 900})
     pg = ctx.new_page()
