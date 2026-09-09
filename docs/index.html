@@ -503,7 +503,7 @@
    교사용 설정 (여기만 고치면 됩니다)
    ════════════════════════════════════════════════════════════════ */
 const CONFIG = {
-  version: "2026-09-09h (교사 현황 화면)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
+  version: "2026-09-09i (빠른 현황)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
   title: "Good for All of Us: A Place for Everyone",
   subtitle: "1학년 2학기 영어 쓰기 수행평가",
 
@@ -1004,11 +1004,12 @@ function noteEvent(kind) {
   refresh(); save();
   flushSoon();      // 60초를 기다리지 않고 바로 보냅니다 (선생님 화면에서 빨리 보이도록)
 }
-// 이탈처럼 선생님이 바로 알아야 하는 일은 즉시 보냅니다. 너무 자주 보내지 않도록 10초에 한 번으로 제한합니다.
+// 이탈처럼 선생님이 바로 알아야 하는 일은 즉시 보냅니다. 너무 자주 보내지 않도록 4초에 한 번으로 제한합니다.
+// (선생님 화면이 3초마다 새로 읽으므로 여기서 늦어지면 그만큼 늦게 보입니다.)
 let lastFlush = 0;
 function flushSoon() {
   const now = Date.now();
-  if (now - lastFlush < 10000) return;
+  if (now - lastFlush < 4000) return;
   lastFlush = now;
   autosaveToServer(true);
 }

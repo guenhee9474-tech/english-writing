@@ -984,11 +984,38 @@ function newTeacherKey() {
 function teacherKey() { try { return PropertiesService.getScriptProperties().getProperty("teacherKey") || ""; } catch (e) { return ""; } }
 function ms(d) { return (d instanceof Date && !isNaN(d)) ? d.getTime() : 0; }
 
+/* 현황 화면은 몇 초마다 계속 물어봅니다. 그때마다 시트를 열어 읽으면 느리고 사용량도 많이 듭니다.
+   그래서 읽어 온 결과를 MON_CACHE_SEC 초 동안 보관했다가 그대로 내줍니다.
+   선생님이 세 분이 동시에 보고 있어도 시트를 읽는 것은 몇 초에 한 번뿐입니다. */
+const MON_CACHE_SEC = 3;
+
 function monitorData(cls, key) {
   const want = teacherKey();
   if (!want) return { error: "NO_TEACHER_KEY" };            // 아직 newTeacherKey() 를 실행하지 않음
   if (String(key || "") !== want) return { error: "BAD_KEY" };
-  const out = { ok: true, at: Date.now(), cls: cls || "", classes: [], students: [] };
+  const all = monitorAll();
+  if (all.error) return all;
+  return {
+    ok: true, at: all.at, cls: cls || "", classes: all.classes,
+    students: cls ? all.students.filter((s) => s.c === cls) : all.students
+  };
+}
+
+function monitorAll() {
+  const cache = (function () { try { return CacheService.getScriptCache(); } catch (e) { return null; } })();
+  if (cache) {
+    try { const hit = cache.get("mon_all"); if (hit) return JSON.parse(hit); } catch (e) {}
+  }
+  const data = readMonitorRows();
+  if (cache && !data.error) {
+    // 자료가 아주 커지면(학생이 매우 많으면) 보관에 실패할 수 있습니다. 그때는 그냥 매번 읽습니다.
+    try { cache.put("mon_all", JSON.stringify(data), MON_CACHE_SEC); } catch (e) {}
+  }
+  return data;
+}
+
+function readMonitorRows() {
+  const out = { ok: true, at: Date.now(), classes: [], students: [] };
   try {
     const sh = draftSheet();
     const last = sh.getLastRow();
@@ -1003,11 +1030,10 @@ function monitorData(cls, key) {
         if (!sid) continue;
         const c = classOf(sid);
         if (!seenCls[c]) { seenCls[c] = true; out.classes.push(c); }
-        if (cls && c !== cls) continue;
         seenSid[sid] = true;
         const meta = String(a[i][COL.meta - 1] || "");
         out.students.push({
-          sid: sid, nm: String(a[i][COL.name - 1] || ""), ph: String(a[i][COL.phase - 1] || "research"),
+          c: c, sid: sid, nm: String(a[i][COL.name - 1] || ""), ph: String(a[i][COL.phase - 1] || "research"),
           lv: Number(num(meta, /화면이탈 (\d+)/) || 0), hg: Number(num(meta, /한글입력 (\d+)/) || 0),
           bs: Number(num(meta, /대량입력 (\d+)/) || 0), dc: Number(num(meta, /사전 (\d+)/) || 0),
           sn: Number(a[i][COL.count - 1] || 0),
@@ -1025,15 +1051,14 @@ function monitorData(cls, key) {
         if (!/^\d{3,}$/.test(id)) return;
         const c = classOf(id);
         if (!seenCls[c]) { seenCls[c] = true; out.classes.push(c); }
-        if (cls && c !== cls) return;
         if (seenSid[id]) return;
-        out.students.push({ sid: id, nm: String(r[1] || "").trim(), ph: "", lv: 0, hg: 0, bs: 0, dc: 0, sn: 0, at: 0, dr: 0, fn: 0, dup: false });
+        out.students.push({ c: c, sid: id, nm: String(r[1] || "").trim(), ph: "", lv: 0, hg: 0, bs: 0, dc: 0, sn: 0, at: 0, dr: 0, fn: 0, dup: false });
       });
     }
     out.classes.sort();
     out.students.sort((x, y) => Number(x.sid) - Number(y.sid));
   } catch (e) {
-    logError("현황 화면 읽기", e, cls);
+    logError("현황 화면 읽기", e, "");
     return { error: "READ_FAIL" };
   }
   return out;

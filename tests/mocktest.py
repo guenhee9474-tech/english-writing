@@ -168,6 +168,7 @@ def check(label, cond, detail=''):
 def check_server_file():
     print('T0 서버 파일(gas/Code.gs) 검사')
     gs = open(os.path.join(BASE, '..', 'gas', 'Code.gs'), encoding='utf-8').read()
+    teacher_html = open(os.path.join(DOCS, 'teacher.html'), encoding='utf-8').read()
 
     check('check 가 [초안제출시각] 칸을 돌려준다',
           re.search(r'out\.draftAt\s*=\s*v\[COL\.draftAt\s*-\s*1\]', gs) is not None,
@@ -197,6 +198,15 @@ def check_server_file():
           not re.search(r'teacherKey["\']?\s*[:=]\s*["\'][0-9a-f]{16,}', gs),
           '이 파일은 공개 저장소에 올라간다')
     check('진단 함수가 있다', 'function diagnose' in gs)
+    check('현황 화면 자료를 잠깐 보관해 재사용한다',
+          'CacheService.getScriptCache()' in gs and 'mon_all' in gs and 'MON_CACHE_SEC' in gs,
+          '3초마다 물어보므로 매번 시트를 열면 느리고 사용량이 많이 든다')
+    check('보관 시간이 화면 갱신 주기와 맞는다',
+          int(re.search(r'MON_CACHE_SEC = (\d+)', gs).group(1)) <= int(re.search(r'REFRESH_SEC = (\d+)', teacher_html).group(1)),
+          '보관 시간이 갱신 주기보다 길면 화면이 그만큼 늦어진다')
+    check('이탈을 바로 보내는 간격이 갱신 주기보다 짧다',
+          int(re.search(r'lastFlush < (\d+)', html).group(1)) / 1000 <= int(re.search(r'REFRESH_SEC = (\d+)', teacher_html).group(1)) + 2,
+          '학생 쪽에서 늦게 보내면 화면을 빨리 새로 읽어도 소용없다')
     # 주석을 걷어낸 뒤 검사한다 (설명 문장에 적힌 ScriptApp 까지 잡히면 안 되므로)
     code = re.sub(r'/\*.*?\*/', '', gs, flags=re.S)
     code = '\n'.join(ln.split('//')[0] for ln in code.split('\n'))
