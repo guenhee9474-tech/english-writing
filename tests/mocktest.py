@@ -179,15 +179,23 @@ def check_server_file():
     check('제출을 받는 동안 총괄 시트를 직접 쓰지 않는다',
           'rebuildOverview' not in dopost,
           '제출이 몰릴 때 가장 무거운 작업이 겹쳐 실행 시간 제한을 넘긴다')
-    check('총괄 갱신이 자동으로 예약된다',
-          gs.count('scheduleOverview();') == 3 and 'function scheduleOverview' in gs,
-          '자동 저장·초안 제출·최종 제출 세 곳에서 불러야 한다: ' + str(gs.count('scheduleOverview();')))
-    check('예약이 몰려도 갱신은 한 번만 돈다', "getProperty(\"ovPending\")" in gs and 'OV_DEBOUNCE_SEC' in gs)
-    check('예약된 갱신이 자기 트리거를 지운다',
-          'function overviewOnce' in gs and "dropTriggers(\"overviewOnce\")" in gs)
+    check('총괄 갱신이 자동으로 돈다',
+          gs.count('maybeRebuildOverview(false);') == 3 and 'function maybeRebuildOverview' in gs,
+          '자동 저장·초안 제출·최종 제출 세 곳에서 불러야 한다: ' + str(gs.count('maybeRebuildOverview(false);')))
+    # 주석을 걷어낸 뒤 검사한다 (설명 문장에 적힌 ScriptApp 까지 잡히면 안 되므로)
+    code = re.sub(r'/\*.*?\*/', '', gs, flags=re.S)
+    code = '\n'.join(ln.split('//')[0] for ln in code.split('\n'))
+    check('트리거(ScriptApp)를 쓰지 않는다', 'ScriptApp' not in code,
+          '웹 앱에 script.scriptapp 권한이 없어 매번 실패한다(오류 탭). 주석 밖에서 쓰면 안 된다')
+    check('요청이 몰려도 갱신은 한 번만 돈다', 'getProperty("ovAt")' in gs and 'OV_INTERVAL_SEC' in gs)
+    check('갱신이 저장 잠금을 붙잡지 않는다',
+          'function rebuildOverview' in gs and 'lock.waitLock(30000); } catch (e) { return; }' not in gs,
+          '갱신하는 몇 초 동안 학생 저장이 줄을 서면 안 된다')
     check('선생님이 손으로 켜고 끌 필요가 없다',
           'installOverviewTrigger' not in gs and 'removeOverviewTrigger' not in gs,
           '수업마다 실행해야 하는 함수가 남아 있으면 안 된다')
+    check('반별 탭은 글자를 키운다', 'const BIG = !withClass;' in gs and 'setRowHeights(4, body.length, 34)' in gs)
+    check('이탈한 학생 이름이 맨 위에 나온다', 'leaveNames' in gs)
     check('꼬였을 때 초기화할 방법이 있다', 'function resetOverviewSchedule' in gs)
     check('총괄 갱신이 학생 글 전체를 읽지 않는다',
           'function overviewRows' in gs and 'const rows = overviewRows(draftSheet());' in gs,

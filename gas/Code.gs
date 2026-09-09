@@ -135,7 +135,7 @@ function doPost(e) {
 
     if (p.phase === "save") {                          // 작성 중 자동 저장: 상태 + 읽을 수 있는 텍스트
       saveDraft(data, p.data || "", phaseOf(p.data), "");
-      scheduleOverview();                              // 수업 중에도 총괄이 저절로 갱신되게
+      maybeRebuildOverview(false);                     // 수업 중에도 총괄이 저절로 갱신되게
       return textOut("OK_SAVE");
     }
     // 교사 메뉴 "제출 취소 (다시 열기)": 단계만 되돌립니다. 학생이 다시 쓴 글은 이후 자동 저장으로 정상 저장됩니다.
@@ -153,7 +153,7 @@ function doPost(e) {
         catch (e0) { logError("초안 PDF", e0, data.sid); link = "PDF 실패: " + String(e0 && e0.message || e0).slice(0, 120); }
       }
       saveDraft(data, p.data || "", "draftDone", link, { allowRegress: true });
-      scheduleOverview();
+      maybeRebuildOverview(false);
       return textOut("OK_DRAFT");
     }
     if (p.phase !== "final") return textOut("BAD_PHASE");   // 모르는 단계 값을 최종 제출로 처리하지 않는다
@@ -170,7 +170,7 @@ function doPost(e) {
     if (CFG.notifyEmail) { try { sendMail(data, files); } catch (e2) { logError("메일 보내기", e2, data.sid); } }
     // 총괄 시트는 여기서 직접 쓰지 않고 "잠시 뒤 한 번" 예약합니다.
     // 제출이 몰릴 때 여기서 바로 쓰면 가장 무거운 작업이 30번 겹쳐 실행 시간 제한을 넘깁니다.
-    scheduleOverview();
+    maybeRebuildOverview(false);
     return textOut("OK");
   } catch (err) {
     // 실패해도 학생 화면이 멈추지 않도록 항상 응답합니다. 오류는 "오류" 탭(과 설정한 메일)에 남깁니다.
@@ -725,7 +725,10 @@ function writeStatusSheet(ss, sheetName, title, recs, withClass) {
     ["학번", "이름", "상태", "이탈", "한글", "대량", "사전", "초안 문장", "표현", "최종 문장",
      "마지막 저장", "조용함", "첫 접속", "초안 제출", "최종 제출", "소요", "확인", "초안 PDF", "최종 PDF"]);
   const WIDTH = (withClass ? [80] : []).concat(
-    [64, 80, 92, 52, 52, 52, 52, 72, 52, 72, 100, 64, 100, 100, 100, 120, 84, 150, 150]);
+    [70, 96, 110, 62, 62, 62, 62, 76, 56, 76, 100, 66, 100, 100, 100, 116, 90, 130, 130]);
+  // withClass=true 는 전체를 모은 "총괄", false 는 반별 탭.
+  // 반별 탭은 수업 중에 훑어보는 화면이라 글자와 줄 높이를 키웁니다.
+  const BIG = !withClass;
 
   let sh = ss.getSheetByName(sheetName);
   let fresh = false;
@@ -744,11 +747,20 @@ function writeStatusSheet(ss, sheetName, title, recs, withClass) {
     .setFontSize(13).setFontWeight("bold").setFontColor(C_HEADTX).setBackground(C_HEAD)
     .setVerticalAlignment("middle").setHorizontalAlignment("left");
   sh.setRowHeight(1, 30);
+  // 이탈한 학생 이름을 바로 적어 둡니다. 표를 훑지 않아도 누구인지 보이게.
+  const leaveNames = recs.filter((r) => Number(r.leave) > 0)
+    .sort((a, b) => Number(b.leave) - Number(a.leave))
+    .map((r) => r.name + " " + r.leave).slice(0, 12).join(", ");
+  const staleNames = recs.filter((r) => r.stale).map((r) => r.name).slice(0, 8).join(", ");
   sh.getRange(2, 1, 1, HEAD.length).merge().setValue(
-    "인원 " + recs.length + "  ·  접속 " + on + "  ·  초안 제출 " + drafted + "  ·  최종 제출 " + doneN +
-    "  ·  이탈 있는 학생 " + leaved + "  ·  3분 이상 조용함 " + staleN)
-    .setFontSize(11).setBackground(C_SUB).setVerticalAlignment("middle");
-  sh.setRowHeight(2, 24);
+    "인원 " + recs.length + "   접속 " + on + "   초안 제출 " + drafted + "   최종 제출 " + doneN +
+    (leaved ? "        ⚠ 이탈 " + leaved + "명: " + leaveNames : "        이탈 없음") +
+    (staleN ? "        ⏸ 조용함: " + staleNames : ""))
+    .setFontSize(BIG ? 12 : 11).setFontWeight(leaved ? "bold" : "normal")
+    .setBackground(leaved ? "#FFF1F0" : C_SUB)
+    .setFontColor(leaved ? "#B42318" : "#1B2436")
+    .setVerticalAlignment("middle").setWrap(true);
+  sh.setRowHeight(2, BIG ? 40 : 24);
 
   // 3행: 열 이름
   sh.getRange(3, 1, 1, HEAD.length).setValues([HEAD])
@@ -789,6 +801,14 @@ function writeStatusSheet(ss, sheetName, title, recs, withClass) {
     sh.getRange(4, o + 1, body.length, 1).setHorizontalAlignment("center");
     sh.getRange(4, 1, body.length, HEAD.length).setVerticalAlignment("middle");
     if (body.length > 1) sh.getRange(4, 1, body.length, HEAD.length).setBorder(null, null, null, null, null, true, "#E4E8EF", SpreadsheetApp.BorderStyle.SOLID);
+    if (BIG) {
+      // 이름·상태·이탈은 멀리서도 보이게 키웁니다
+      sh.getRange(4, 1, body.length, HEAD.length).setFontSize(12);
+      sh.getRange(4, o + 2, body.length, 1).setFontSize(14).setFontWeight("bold");   // 이름
+      sh.getRange(4, o + 3, body.length, 1).setFontSize(13).setFontWeight("bold");   // 상태
+      sh.getRange(4, o + 4, body.length, 1).setFontSize(16).setFontWeight("bold");   // 이탈
+      sh.setRowHeights(4, body.length, 34);   // 한 줄씩 부르면 갱신이 느려집니다
+    }
   }
   sh.setFrozenRows(3);
   sh.setFrozenColumns(withClass ? 3 : 2);
@@ -797,11 +817,12 @@ function writeStatusSheet(ss, sheetName, title, recs, withClass) {
   return sh;
 }
 
-// "총괄"·반별 탭·"반별 요약"을 처음부터 다시 씁니다. 학생 요청이 오면 scheduleOverview() 가 알아서 부릅니다.
+// "총괄"·반별 탭·"반별 요약"을 처음부터 다시 씁니다. 학생 요청이 오면 maybeRebuildOverview() 가 알아서 부릅니다.
 function rebuildOverview() {
-  const lock = LockService.getScriptLock();
-  try { lock.waitLock(30000); } catch (e) { return; }
-  try {
+  // 잠금을 잡지 않습니다. 총괄·반별 탭은 학생 상태를 쓰는 "초안" 시트와 다른 탭이라 서로 안 부딪히고,
+  // 여기서 잠금을 잡으면 갱신하는 몇 초 동안 30명의 저장이 줄을 서게 됩니다.
+  // 갱신이 겹쳐 도는 것은 maybeRebuildOverview 의 시간 간격이 막아 줍니다.
+  {
     const ss = SpreadsheetApp.openById(getLogSheet().getParent().getId());
     const ov = CFG.overview || {};
     const rows = overviewRows(draftSheet());
@@ -894,45 +915,37 @@ function rebuildOverview() {
     ssh.setFrozenRows(1);
     if (sfresh) [90, 90, 60, 80, 80, 100, 60].forEach((w, i) => ssh.setColumnWidth(i + 1, w));
     ssh.getRange(sum.length + 3, 1).setValue("마지막 갱신 " + Utilities.formatDate(new Date(), "Asia/Seoul", "MM-dd HH:mm:ss"));
-  } finally { try { lock.releaseLock(); } catch (e) {} }
+  }
 }
 
 /* ── 총괄 시트 자동 갱신 (선생님이 아무것도 하지 않아도 됩니다) ──────────────
-   학생 요청(자동 저장·제출)이 들어오면 "잠시 뒤에 한 번 갱신"을 예약합니다.
-   이미 예약이 있으면 아무것도 하지 않으므로, 30명이 동시에 저장해도 갱신은 한 번만 돕니다.
-   갱신은 학생 요청과 따로(트리거로) 돌기 때문에 제출이 느려지지 않고, 실행 시간 제한도 건드리지 않습니다.
-   수업이 없을 때는 요청이 없으니 아무것도 돌지 않습니다. 켜고 끄는 작업이 필요 없습니다. */
+   학생 요청이 들어온 김에 총괄을 다시 씁니다. 단, 마지막 갱신에서 OV_INTERVAL_SEC 이 지났을 때만.
+   그래서 30명이 한꺼번에 저장하거나 제출해도 그 중 딱 한 명의 요청만 갱신 비용을 냅니다.
+   그 요청은 몇 초 길어지지만 no-cors 로 보내는 저장이라 학생 화면은 기다리지 않습니다.
 
-const OV_DEBOUNCE_SEC = 120;      // 이 시간 안에 들어온 요청들은 갱신 한 번으로 묶습니다
-const OV_DELAY_SEC = 60;          // 예약하고 이만큼 뒤에 갱신합니다
+   ※ 예전에는 시간 트리거(ScriptApp.newTrigger)로 예약했는데, 웹 앱에 script.scriptapp 권한이 없어서
+     매번 실패했습니다(오류 탭에 "권한이 없습니다"). 권한을 다시 승인받게 하는 대신, 권한이 필요 없는
+     이 방식으로 바꿨습니다. 이 파일에서 ScriptApp 을 다시 쓰면 같은 문제가 납니다. */
 
-function scheduleOverview() {
+const OV_INTERVAL_SEC = 60;       // 이 시간에 한 번만 총괄을 다시 씁니다
+
+function maybeRebuildOverview(force) {
   try {
     const props = PropertiesService.getScriptProperties();
-    const at = Number(props.getProperty("ovPending") || 0);
     const now = Date.now();
-    if (at && (now - at) < OV_DEBOUNCE_SEC * 1000) return;      // 이미 예약되어 있음
-    dropTriggers("overviewOnce");                               // 오래된 예약이 남아 있으면 치운다
-    props.setProperty("ovPending", String(now));
-    ScriptApp.newTrigger("overviewOnce").timeBased().after(OV_DELAY_SEC * 1000).create();
-  } catch (e) { logError("총괄 갱신 예약", e, ""); }
+    if (!force) {
+      const at = Number(props.getProperty("ovAt") || 0);
+      if (at && (now - at) < OV_INTERVAL_SEC * 1000) return;    // 아직 이릅니다
+    }
+    props.setProperty("ovAt", String(now));   // 먼저 찍어 둡니다 (겹쳐 들어온 요청이 또 돌지 않게)
+    rebuildOverview();
+  } catch (e) { logError("총괄 갱신", e, ""); }
 }
-// 예약된 갱신이 실제로 도는 함수. 자기 예약을 지우고 한 번 갱신합니다.
-function overviewOnce() {
-  try { PropertiesService.getScriptProperties().deleteProperty("ovPending"); } catch (e) {}
-  dropTriggers("overviewOnce");
-  try { rebuildOverview(); } catch (e) { logError("총괄 갱신", e, ""); }
-}
-function dropTriggers(fn) {
-  try { ScriptApp.getProjectTriggers().forEach((t) => { if (t.getHandlerFunction() === fn) ScriptApp.deleteTrigger(t); }); } catch (e) {}
-}
-// 예약이 꼬였을 때(총괄이 안 바뀔 때) 한 번 실행하면 초기화됩니다.
+// 총괄이 안 바뀔 때 편집기에서 한 번 실행하면 지금 즉시 다시 씁니다.
 function resetOverviewSchedule() {
-  try { PropertiesService.getScriptProperties().deleteProperty("ovPending"); } catch (e) {}
-  dropTriggers("overviewOnce");
-  dropTriggers("rebuildOverview");
-  rebuildOverview();
-  Logger.log("총괄 갱신 예약을 초기화하고 지금 한 번 갱신했습니다.");
+  try { PropertiesService.getScriptProperties().deleteProperty("ovAt"); } catch (e) {}
+  maybeRebuildOverview(true);
+  Logger.log("총괄을 지금 다시 썼습니다.");
 }
 
 /* ────────────────────────── 오류 기록 · PDF 다시 만들기 ────────────────────────── */
