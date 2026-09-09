@@ -138,7 +138,7 @@ function doPost(e) {
 
     if (p.phase === "save") {                          // 작성 중 자동 저장: 상태 + 읽을 수 있는 텍스트
       saveDraft(data, p.data || "", phaseOf(p.data), "");
-      maybeRebuildOverview(false);                     // 수업 중에도 총괄이 저절로 갱신되게
+      maybeRebuildOverview(OV_SAVE_SEC);               // 총괄 탭도 가끔 따라오게 (실시간 화면은 teacher.html)
       return textOut("OK_SAVE");
     }
     // 교사 메뉴 "제출 취소 (다시 열기)": 단계만 되돌립니다. 학생이 다시 쓴 글은 이후 자동 저장으로 정상 저장됩니다.
@@ -156,7 +156,7 @@ function doPost(e) {
         catch (e0) { logError("초안 PDF", e0, data.sid); link = "PDF 실패: " + String(e0 && e0.message || e0).slice(0, 120); }
       }
       saveDraft(data, p.data || "", "draftDone", link, { allowRegress: true });
-      maybeRebuildOverview(true);   // 제출은 바로 보여야 합니다 (기다리면 마지막 제출이 화면에 안 남습니다)
+      maybeRebuildOverview(OV_SUBMIT_SEC);   // 제출은 곧 보이게. 다만 30명이 몰려도 몇 번만 돌게 간격을 둡니다
       return textOut("OK_DRAFT");
     }
     if (p.phase !== "final") return textOut("BAD_PHASE");   // 모르는 단계 값을 최종 제출로 처리하지 않는다
@@ -173,7 +173,7 @@ function doPost(e) {
     if (CFG.notifyEmail) { try { sendMail(data, files); } catch (e2) { logError("메일 보내기", e2, data.sid); } }
     // 총괄 시트는 여기서 직접 쓰지 않고 "잠시 뒤 한 번" 예약합니다.
     // 제출이 몰릴 때 여기서 바로 쓰면 가장 무거운 작업이 30번 겹쳐 실행 시간 제한을 넘깁니다.
-    maybeRebuildOverview(true);   // 제출은 바로 보여야 합니다
+    maybeRebuildOverview(OV_SUBMIT_SEC);   // 제출은 곧 보이게 (간격을 두어 몰릴 때 시트가 계속 다시 써지지 않게)
     return textOut("OK");
   } catch (err) {
     // 실패해도 학생 화면이 멈추지 않도록 항상 응답합니다. 오류는 "오류" 탭(과 설정한 메일)에 남깁니다.
@@ -935,15 +935,22 @@ function rebuildOverview() {
      매번 실패했습니다(오류 탭에 "권한이 없습니다"). 권한을 다시 승인받게 하는 대신, 권한이 필요 없는
      이 방식으로 바꿨습니다. 이 파일에서 ScriptApp 을 다시 쓰면 같은 문제가 납니다. */
 
-const OV_INTERVAL_SEC = 60;       // 이 시간에 한 번만 총괄을 다시 씁니다
+/* 수업 중 실시간으로 보는 것은 선생님 현황 화면(teacher.html)입니다. 그쪽은 시트를 읽기만 합니다.
+   시트의 총괄 탭은 "기록"이라 자주 다시 쓸 필요가 없습니다. 오히려 자주 쓰면
+   선생님이 스프레드시트를 열어 둔 동안 계속 다시 써져서 파일이 안 열립니다(무한 로딩).
+   그래서 간격을 넉넉히 둡니다. */
+const OV_SAVE_SEC = 180;          // 작성 중 자동 저장으로 갱신하는 최소 간격
+const OV_SUBMIT_SEC = 20;         // 제출로 갱신하는 최소 간격 (마지막 제출이 곧 반영되도록 짧게)
 
-function maybeRebuildOverview(force) {
+// minSec 전에 이미 갱신했으면 건너뜁니다. 0을 주면 무조건 다시 씁니다.
+function maybeRebuildOverview(minSec) {
   try {
     const props = PropertiesService.getScriptProperties();
     const now = Date.now();
-    if (!force) {
+    const gap = (minSec == null ? OV_SAVE_SEC : minSec) * 1000;
+    if (gap > 0) {
       const at = Number(props.getProperty("ovAt") || 0);
-      if (at && (now - at) < OV_INTERVAL_SEC * 1000) return;    // 아직 이릅니다
+      if (at && (now - at) < gap) return;                       // 아직 이릅니다
     }
     props.setProperty("ovAt", String(now));   // 먼저 찍어 둡니다 (겹쳐 들어온 요청이 또 돌지 않게)
     rebuildOverview();
@@ -952,7 +959,7 @@ function maybeRebuildOverview(force) {
 // 총괄이 안 바뀔 때 편집기에서 한 번 실행하면 지금 즉시 다시 씁니다.
 function resetOverviewSchedule() {
   try { PropertiesService.getScriptProperties().deleteProperty("ovAt"); } catch (e) {}
-  maybeRebuildOverview(true);
+  maybeRebuildOverview(0);
   Logger.log("총괄을 지금 다시 썼습니다.");
 }
 
@@ -1033,6 +1040,46 @@ function monitorData(cls, key) {
 }
 
 /* ────────────────────────── 오류 기록 · PDF 다시 만들기 ────────────────────────── */
+
+/* 편집기에서 diagnose() 를 실행하면 지금 상태를 한 번에 찍어 줍니다.
+   실행 로그에 나온 글자를 그대로 복사해서 주시면 무엇이 잘못됐는지 바로 알 수 있습니다.
+   학생 이름과 학생이 쓴 글은 찍지 않습니다. */
+function diagnose() {
+  const out = ["── 진단 " + Utilities.formatDate(new Date(), "Asia/Seoul", "MM-dd HH:mm:ss") + " ──"];
+  try {
+    const ss = SpreadsheetApp.openById(getLogSheet().getParent().getId());
+    out.push("파일: " + ss.getName());
+    out.push("주소: " + ss.getUrl());
+    out.push("탭 (이름 : 쓴 범위 / 만들어진 크기):");
+    let cells = 0;
+    ss.getSheets().forEach((s) => {
+      const c = s.getMaxRows() * s.getMaxColumns();
+      cells += c;
+      out.push("   " + s.getName() + " : " + s.getLastRow() + "행 " + s.getLastColumn() + "열 / " + s.getMaxRows() + "×" + s.getMaxColumns());
+    });
+    out.push("탭 " + ss.getSheets().length + "개, 만들어진 칸 합계 약 " + cells + "개 (500만을 넘으면 파일이 느려집니다)");
+    const sh = draftSheet();
+    out.push("학생 줄 수: " + Math.max(0, sh.getLastRow() - 1));
+    const ovAt = Number(PropertiesService.getScriptProperties().getProperty("ovAt") || 0);
+    out.push("총괄 마지막 갱신: " + (ovAt ? Utilities.formatDate(new Date(ovAt), "Asia/Seoul", "MM-dd HH:mm:ss") : "(없음)"));
+    out.push("선생님 화면 열쇠: " + (teacherKey() ? "설정됨" : "없음 → newTeacherKey() 실행 필요"));
+    out.push("최종 단계: " + (isFinalOpen() ? "열림" : "닫힘"));
+    const es = ss.getSheetByName("오류");
+    if (es && es.getLastRow() >= 2) {
+      const n = Math.min(8, es.getLastRow() - 1);
+      out.push("최근 오류 " + n + "건 (전체 " + (es.getLastRow() - 1) + "건):");
+      es.getRange(es.getLastRow() - n + 1, 1, n, 3).getValues().forEach((r) => {
+        const t = (r[0] instanceof Date) ? Utilities.formatDate(r[0], "Asia/Seoul", "MM-dd HH:mm") : String(r[0]);
+        out.push("   " + t + " | " + r[1] + " | " + String(r[2]).slice(0, 150));
+      });
+    } else out.push("오류 탭: 비어 있음 (좋습니다)");
+  } catch (e) {
+    out.push("진단 중 오류: " + (e && e.message || e));
+  }
+  const text = out.join("\n");
+  Logger.log(text);
+  return text;
+}
 
 function logError(where, err, extra) {
   try {

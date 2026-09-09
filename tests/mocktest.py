@@ -186,9 +186,17 @@ def check_server_file():
     check('총괄 갱신이 자동으로 돈다',
           dopost.count('maybeRebuildOverview(') == 3 and 'function maybeRebuildOverview' in gs,
           '자동 저장·초안 제출·최종 제출 세 곳에서 불러야 한다: ' + str(dopost.count('maybeRebuildOverview(')))
-    check('제출은 기다리지 않고 바로 갱신한다',
-          dopost.count('maybeRebuildOverview(true)') == 2 and dopost.count('maybeRebuildOverview(false)') == 1,
-          '초안·최종 제출은 즉시(true), 자동 저장만 간격을 지킨다(false)')
+    check('제출은 짧은 간격, 자동 저장은 긴 간격으로 갱신한다',
+          dopost.count('maybeRebuildOverview(OV_SUBMIT_SEC)') == 2 and dopost.count('maybeRebuildOverview(OV_SAVE_SEC)') == 1,
+          '제출 때마다 통째로 다시 쓰면 선생님이 열어 둔 스프레드시트가 계속 다시 써져 안 열린다')
+    check('갱신 간격이 넉넉하다',
+          re.search(r'OV_SAVE_SEC = (\d+)', gs) and int(re.search(r'OV_SAVE_SEC = (\d+)', gs).group(1)) >= 120,
+          '실시간은 teacher.html 이 맡고, 시트는 기록이라 자주 쓸 필요가 없다')
+    check('현황 화면 기능이 있다', 'function monitorData' in gs and 'function newTeacherKey' in gs)
+    check('현황 화면 열쇠를 코드에 적지 않는다',
+          not re.search(r'teacherKey["\']?\s*[:=]\s*["\'][0-9a-f]{16,}', gs),
+          '이 파일은 공개 저장소에 올라간다')
+    check('진단 함수가 있다', 'function diagnose' in gs)
     # 주석을 걷어낸 뒤 검사한다 (설명 문장에 적힌 ScriptApp 까지 잡히면 안 되므로)
     code = re.sub(r'/\*.*?\*/', '', gs, flags=re.S)
     code = '\n'.join(ln.split('//')[0] for ln in code.split('\n'))
