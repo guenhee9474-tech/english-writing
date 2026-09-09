@@ -116,7 +116,7 @@ const $ = (id) => document.getElementById(id);
 
 let cls = q.get("cls") || localStorage.getItem("t_cls") || "";
 let sortBy = localStorage.getItem("t_sort") || "sid";
-let lastOk = 0, timer = null, busy = false;
+let lastOk = 0, lastErr = "", loading = false, busy = false, tries = 0;
 
 const LABEL = { research: "조사 중", draft: "초안 작성 중", draftDone: "초안 제출", final: "최종 작성 중", done: "최종 제출" };
 
@@ -131,8 +131,13 @@ function jsonp(params, timeoutMs) {
     const p = new URLSearchParams(params); p.set("callback", cb);
     s.src = SCRIPT_URL + "?" + p.toString();
     document.head.appendChild(s);
-    setTimeout(() => { if (!done) { done = true; cleanup(); reject(new Error("timeout")); } }, timeoutMs || 12000);
+    setTimeout(() => { if (!done) { done = true; cleanup(); reject(new Error("timeout")); } }, timeoutMs || 25000);
   });
+}
+// 서버가 무엇을 돌려주는지 눈으로 확인할 수 있는 주소 (문제가 생겼을 때 새 탭에서 열어 봅니다)
+function rawUrl() {
+  const p = new URLSearchParams({ action: "monitor", k: KEY, cls: cls || "" });
+  return SCRIPT_URL + "?" + p.toString();
 }
 
 function ago(ms) {
@@ -236,7 +241,7 @@ function showMsg(html) { $("body").innerHTML = '<div class="msg">' + html + "</d
 
 async function load(immediate) {
   if (busy) return;
-  busy = true;
+  busy = true; loading = true; tries++; tickFresh();
   try {
     const d = await jsonp({ action: "monitor", k: KEY, cls: cls });
     if (!d || d.error) {
@@ -249,24 +254,48 @@ async function load(immediate) {
       } else {
         showMsg("<h2>읽지 못했습니다</h2>" + esc((d && d.error) || "알 수 없는 오류") + "<br>잠시 뒤 다시 시도합니다.");
       }
-      setFresh(false);
+      lastErr = (d && d.error) || "unknown";
       return;
     }
     lastData = d;
     lastOk = Date.now();
+    lastErr = "";
     render(d);
-    setFresh(true);
   } catch (e) {
-    setFresh(false);
-  } finally { busy = false; }
+    lastErr = (e && e.message) || String(e);
+    // 한 번도 성공한 적이 없으면 빈 화면으로 두지 않고 이유를 보여 줍니다.
+    if (!lastOk) showFail();
+  } finally { busy = false; loading = false; tickFresh(); }
 }
 
-function setFresh(ok) {
+// 연결이 안 될 때: 무엇을 해 보면 되는지까지 화면에 적어 둡니다.
+function showFail() {
+  const why = lastErr === "timeout"
+    ? "서버가 25초 안에 답하지 않았습니다."
+    : "브라우저가 서버 응답을 불러오지 못했습니다. (" + esc(lastErr) + ")";
+  showMsg("<h2>선생님 서버에 연결하지 못했습니다</h2>" + why +
+    "<br><br><b>이렇게 확인해 보세요.</b><br>" +
+    '1. <a href="' + esc(rawUrl()) + '" target="_blank" rel="noopener">이 주소를 새 탭에서 열어 보세요</a>. ' +
+    "글자로 된 자료(<code>cb({\"ok\":true…</code>)가 보이면 서버는 정상이고 이 브라우저가 막고 있는 것입니다. " +
+    "구글 로그인 화면이 뜨면 로그인한 뒤 이 화면을 새로고침하세요.<br>" +
+    "2. 시크릿 창이나 다른 브라우저에서 이 화면을 열어 보세요.<br>" +
+    "3. 그래도 안 되면 학교 네트워크가 <code>script.googleusercontent.com</code> 을 막고 있을 수 있습니다.<br><br>" +
+    '<button id="again" style="font-size:16px;padding:10px 18px;border-radius:8px;border:1px solid #1B2436;background:#1B2436;color:#fff;cursor:pointer">다시 시도</button> ' +
+    '<span style="color:#5D6675;font-size:14px;margin-left:10px">' + tries + "번 시도했습니다</span>");
+  const a = $("again"); if (a) a.onclick = () => { lastErr = ""; showMsg("<h2>다시 불러오는 중…</h2>"); load(true); };
+}
+
+// 상태 표시는 실제 상태만 말합니다. (예전에는 한 번도 성공하지 못했는데도 초록불에 "방금 갱신"이 떴습니다.)
+function tickFresh() {
   const dot = $("dot"), t = $("fresh");
-  if (!lastOk) { t.textContent = ok ? "방금 갱신" : "연결 안 됨"; dot.className = "dot" + (ok ? "" : " off"); return; }
+  if (!lastOk) {
+    t.textContent = loading ? "불러오는 중…" : (lastErr ? "연결 안 됨" : "대기 중");
+    dot.className = "dot " + (loading ? "stale" : "off");
+    return;
+  }
   const s = Math.round((Date.now() - lastOk) / 1000);
   t.textContent = (s < 5 ? "방금" : s + "초 전") + " 갱신 · " + REFRESH_SEC + "초마다";
-  dot.className = "dot" + (!ok ? " off" : s > REFRESH_SEC * 3 ? " stale" : "");
+  dot.className = "dot" + (lastErr ? " off" : s > REFRESH_SEC * 3 ? " stale" : "");
 }
 
 if (!KEY) {
@@ -275,8 +304,8 @@ if (!KEY) {
           "<code>…teacher.html?k=…</code> 주소가 찍힙니다. 그 주소를 북마크해서 여세요.");
 } else {
   load(true);
-  timer = setInterval(load, REFRESH_SEC * 1000);
-  setInterval(() => setFresh(true), 1000);
+  setInterval(load, REFRESH_SEC * 1000);
+  setInterval(tickFresh, 1000);
   // 화면을 다시 보면 바로 한 번 읽습니다
   document.addEventListener("visibilitychange", () => { if (!document.hidden) load(true); });
 }

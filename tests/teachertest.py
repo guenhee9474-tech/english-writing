@@ -123,6 +123,27 @@ with sync_playwright() as p:
     check('갱신 시각이 표시된다', '갱신' in pg.inner_text('#fresh'), pg.inner_text('#fresh'))
 
     check('페이지 오류가 없다', not errs, errs)
+
+    # 8) 서버가 아예 답하지 않을 때 (선생님이 겪은 상황) — 빈 화면으로 두면 안 된다
+    print('연결 실패를 화면에 알리는지')
+    ctx2 = b.new_context(viewport={'width': 1280, 'height': 900})
+    pg2 = ctx2.new_page()
+    e2 = []
+    pg2.on('pageerror', lambda e: e2.append(str(e)))
+    pg2.route(SCRIPT + '*', lambda r: r.abort())        # 요청이 막힌 상황
+    pg2.goto('http://127.0.0.1:8882/teacher.html?k=' + KEY)
+    pg2.wait_for_timeout(3000)
+    body2 = pg2.inner_text('body')
+    check('실패하면 이유를 화면에 적는다', '연결하지 못했습니다' in body2, body2.replace('\n', ' ')[:90])
+    check('확인할 방법을 알려 준다', '새 탭에서 열어' in body2)
+    check('다시 시도 버튼이 있다', pg2.query_selector('#again') is not None)
+    fresh2 = pg2.inner_text('#fresh')
+    check('성공한 척하지 않는다', '방금' not in fresh2 and ('연결 안 됨' in fresh2 or '불러오는 중' in fresh2), fresh2)
+    dot2 = pg2.get_attribute('#dot', 'class')
+    check('표시등이 초록이 아니다', 'off' in dot2 or 'stale' in dot2, dot2)
+    check('실패 화면에 오류가 없다', not e2, e2)
+    ctx2.close()
+
     b.close()
 
 srv.shutdown()
