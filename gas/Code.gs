@@ -77,7 +77,10 @@ const CFG = {
   dict: { enabled: true, maxLen: 20, maxPerStudent: 80, logSheetName: "사전" },
 
   token: "gfa2026",                             // 작성 페이지의 CONFIG.submit.token 과 같아야 함
-  maxChars: 20000                               // 한 항목당 글자 수 상한 (장난 제출 방지)
+  maxChars: 20000,                              // 한 항목당 글자 수 상한 (장난 제출 방지)
+
+  // 선생님 현황 화면 주소. 편집기에서 newTeacherKey() 를 실행하면 이 주소에 열쇠를 붙여 알려 줍니다.
+  teacherPage: "https://guenhee9474-tech.github.io/english-writing/teacher.html"
 };
 
 /* ────────────────────────── 잠금 · 시트 손잡이 ──────────────────────────
@@ -153,7 +156,7 @@ function doPost(e) {
         catch (e0) { logError("초안 PDF", e0, data.sid); link = "PDF 실패: " + String(e0 && e0.message || e0).slice(0, 120); }
       }
       saveDraft(data, p.data || "", "draftDone", link, { allowRegress: true });
-      maybeRebuildOverview(false);
+      maybeRebuildOverview(true);   // 제출은 바로 보여야 합니다 (기다리면 마지막 제출이 화면에 안 남습니다)
       return textOut("OK_DRAFT");
     }
     if (p.phase !== "final") return textOut("BAD_PHASE");   // 모르는 단계 값을 최종 제출로 처리하지 않는다
@@ -170,7 +173,7 @@ function doPost(e) {
     if (CFG.notifyEmail) { try { sendMail(data, files); } catch (e2) { logError("메일 보내기", e2, data.sid); } }
     // 총괄 시트는 여기서 직접 쓰지 않고 "잠시 뒤 한 번" 예약합니다.
     // 제출이 몰릴 때 여기서 바로 쓰면 가장 무거운 작업이 30번 겹쳐 실행 시간 제한을 넘깁니다.
-    maybeRebuildOverview(false);
+    maybeRebuildOverview(true);   // 제출은 바로 보여야 합니다
     return textOut("OK");
   } catch (err) {
     // 실패해도 학생 화면이 멈추지 않도록 항상 응답합니다. 오류는 "오류" 탭(과 설정한 메일)에 남깁니다.
@@ -190,7 +193,9 @@ function doGet(e) {
   if (!cb) return textOut("작성 페이지의 제출을 받는 주소입니다. 정상 작동 중. 최종 단계: " + (isFinalOpen() ? "열림" : "닫힘"));
   let out = {};
   try {
-    if (CFG.token && p.token !== CFG.token) out = { error: "BAD_TOKEN" };
+    // 선생님 현황 화면은 학생용 token 이 아니라 자기 열쇠(k)로 확인합니다. 그래서 token 검사보다 먼저 봅니다.
+    if (p.action === "monitor") out = monitorData(p.cls || "", p.k || "");
+    else if (CFG.token && p.token !== CFG.token) out = { error: "BAD_TOKEN" };
     else if (p.action === "load") {                 // 로그인: 열쇠 확인·발급 + 저장된 상태 + 최종 제출 여부 + 최종 단계 열림 여부
       out = loadOrRegister(p.sid, p.name, p.key);
       out.finalOpen = isFinalOpen();
@@ -743,24 +748,27 @@ function writeStatusSheet(ss, sheetName, title, recs, withClass) {
   const staleN = recs.filter((r) => r.stale).length;
 
   // 1행: 제목 + 갱신 시각 / 2행: 한 줄 요약
-  sh.getRange(1, 1, 1, HEAD.length).merge().setValue(title + "  ·  마지막 갱신 " + stamp)
-    .setFontSize(13).setFontWeight("bold").setFontColor(C_HEADTX).setBackground(C_HEAD)
-    .setVerticalAlignment("middle").setHorizontalAlignment("left");
+  // 셀을 병합하지 않습니다. 병합한 줄이 고정 열 경계를 가로지르면
+  // "병합된 셀의 일부만 포함된 열을 고정할 수 없습니다" 오류가 나면서 갱신이 통째로 멈춥니다.
+  // 대신 배경색만 줄 전체에 칠하고 글자는 A열에 둡니다(옆 칸이 비어 있어 그대로 흘러 보입니다).
+  sh.getRange(1, 1, 1, HEAD.length).setBackground(C_HEAD);
+  sh.getRange(1, 1).setValue(title + "  ·  마지막 갱신 " + stamp)
+    .setFontSize(13).setFontWeight("bold").setFontColor(C_HEADTX).setVerticalAlignment("middle");
   sh.setRowHeight(1, 30);
   // 이탈한 학생 이름을 바로 적어 둡니다. 표를 훑지 않아도 누구인지 보이게.
   const leaveNames = recs.filter((r) => Number(r.leave) > 0)
     .sort((a, b) => Number(b.leave) - Number(a.leave))
     .map((r) => r.name + " " + r.leave).slice(0, 12).join(", ");
   const staleNames = recs.filter((r) => r.stale).map((r) => r.name).slice(0, 8).join(", ");
-  sh.getRange(2, 1, 1, HEAD.length).merge().setValue(
+  sh.getRange(2, 1, 1, HEAD.length).setBackground(leaved ? "#FFF1F0" : C_SUB);
+  sh.getRange(2, 1).setValue(
     "인원 " + recs.length + "   접속 " + on + "   초안 제출 " + drafted + "   최종 제출 " + doneN +
     (leaved ? "        ⚠ 이탈 " + leaved + "명: " + leaveNames : "        이탈 없음") +
     (staleN ? "        ⏸ 조용함: " + staleNames : ""))
     .setFontSize(BIG ? 12 : 11).setFontWeight(leaved ? "bold" : "normal")
-    .setBackground(leaved ? "#FFF1F0" : C_SUB)
     .setFontColor(leaved ? "#B42318" : "#1B2436")
-    .setVerticalAlignment("middle").setWrap(true);
-  sh.setRowHeight(2, BIG ? 40 : 24);
+    .setVerticalAlignment("middle");
+  sh.setRowHeight(2, BIG ? 32 : 24);
 
   // 3행: 열 이름
   sh.getRange(3, 1, 1, HEAD.length).setValues([HEAD])
@@ -946,6 +954,82 @@ function resetOverviewSchedule() {
   try { PropertiesService.getScriptProperties().deleteProperty("ovAt"); } catch (e) {}
   maybeRebuildOverview(true);
   Logger.log("총괄을 지금 다시 썼습니다.");
+}
+
+/* ────────────────────────── 선생님 현황 화면 ──────────────────────────
+   docs/teacher.html 이 몇 초마다 이 함수를 읽어 갑니다. 시트를 쓰지 않고 읽기만 하므로 자주 불러도 됩니다.
+
+   학생 이름·학번이 보이는 화면이라 아무나 열면 안 됩니다. 열쇠는 **코드에 적지 않습니다**.
+   이 파일은 공개 저장소에 올라가므로 코드에 적으면 누구나 볼 수 있습니다. 스크립트 속성에 보관합니다.
+   편집기에서 newTeacherKey() 를 한 번 실행하면 열쇠를 만들고 열 주소를 실행 로그에 찍어 줍니다. */
+
+function newTeacherKey() {
+  const k = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, "").slice(0, 40);
+  PropertiesService.getScriptProperties().setProperty("teacherKey", k);
+  Logger.log("─────────────────────────────────────────────");
+  Logger.log("선생님 현황 화면 주소입니다. 북마크해 두세요:");
+  Logger.log(CFG.teacherPage + "?k=" + k);
+  Logger.log("─────────────────────────────────────────────");
+  Logger.log("이 주소를 아는 사람은 학생 현황을 볼 수 있습니다. 학생에게 알려 주지 마세요.");
+  Logger.log("주소가 새 나갔다고 생각되면 newTeacherKey() 를 다시 실행하면 예전 주소는 막힙니다.");
+  return k;
+}
+function teacherKey() { try { return PropertiesService.getScriptProperties().getProperty("teacherKey") || ""; } catch (e) { return ""; } }
+function ms(d) { return (d instanceof Date && !isNaN(d)) ? d.getTime() : 0; }
+
+function monitorData(cls, key) {
+  const want = teacherKey();
+  if (!want) return { error: "NO_TEACHER_KEY" };            // 아직 newTeacherKey() 를 실행하지 않음
+  if (String(key || "") !== want) return { error: "BAD_KEY" };
+  const out = { ok: true, at: Date.now(), cls: cls || "", classes: [], students: [] };
+  try {
+    const sh = draftSheet();
+    const last = sh.getLastRow();
+    const seenCls = {};
+    const seenSid = {};
+    if (last >= 2) {
+      const n = last - 1;
+      const a = sh.getRange(2, 1, n, 8).getValues();          // 학번 … 자동집계
+      const b = sh.getRange(2, COL.dup, n, 3).getValues();    // 중복, 초안제출시각, 최종제출시각
+      for (let i = 0; i < n; i++) {
+        const sid = String(a[i][COL.sid - 1] || "").trim();
+        if (!sid) continue;
+        const c = classOf(sid);
+        if (!seenCls[c]) { seenCls[c] = true; out.classes.push(c); }
+        if (cls && c !== cls) continue;
+        seenSid[sid] = true;
+        const meta = String(a[i][COL.meta - 1] || "");
+        out.students.push({
+          sid: sid, nm: String(a[i][COL.name - 1] || ""), ph: String(a[i][COL.phase - 1] || "research"),
+          lv: Number(num(meta, /화면이탈 (\d+)/) || 0), hg: Number(num(meta, /한글입력 (\d+)/) || 0),
+          bs: Number(num(meta, /대량입력 (\d+)/) || 0), dc: Number(num(meta, /사전 (\d+)/) || 0),
+          sn: Number(a[i][COL.count - 1] || 0),
+          at: ms(a[i][COL.at - 1]), dr: ms(b[i][1]), fn: ms(b[i][2]),
+          dup: String(b[i][0] || "") === "Y"
+        });
+      }
+    }
+    // "명단" 탭이 있으면 아직 한 번도 안 들어온 학생도 보여 줍니다 (누가 안 들어왔는지가 제일 급하므로)
+    const ss = SpreadsheetApp.openById(getLogSheet().getParent().getId());
+    const rs = ss.getSheetByName((CFG.overview || {}).rosterName || "명단");
+    if (rs && rs.getLastRow() >= 2) {
+      rs.getRange(2, 1, rs.getLastRow() - 1, 2).getValues().forEach((r) => {
+        const id = String(r[0] || "").trim();
+        if (!/^\d{3,}$/.test(id)) return;
+        const c = classOf(id);
+        if (!seenCls[c]) { seenCls[c] = true; out.classes.push(c); }
+        if (cls && c !== cls) return;
+        if (seenSid[id]) return;
+        out.students.push({ sid: id, nm: String(r[1] || "").trim(), ph: "", lv: 0, hg: 0, bs: 0, dc: 0, sn: 0, at: 0, dr: 0, fn: 0, dup: false });
+      });
+    }
+    out.classes.sort();
+    out.students.sort((x, y) => Number(x.sid) - Number(y.sid));
+  } catch (e) {
+    logError("현황 화면 읽기", e, cls);
+    return { error: "READ_FAIL" };
+  }
+  return out;
 }
 
 /* ────────────────────────── 오류 기록 · PDF 다시 만들기 ────────────────────────── */

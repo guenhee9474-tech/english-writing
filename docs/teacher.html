@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>수행평가 현황 (교사용)</title>
+<!--
+  선생님 현황 화면. 수업 중에 반 하나를 띄워 두고 보는 용도입니다.
+
+  여는 법: 주소 뒤에 열쇠를 붙여야 열립니다.
+      teacher.html?k=열쇠
+  열쇠는 Apps Script 편집기에서 newTeacherKey() 를 한 번 실행하면 만들어지고,
+  실행 로그에 완성된 주소가 찍힙니다. 그 주소를 북마크하세요.
+
+  이 파일에는 열쇠가 들어 있지 않습니다(저장소가 공개라서).
+  학생에게 이 주소를 알려 주지 마세요.
+-->
+<style>
+  :root{
+    --ink:#1B2436; --muted:#5D6675; --line:#DDE3EC; --bg:#F4F6FA; --card:#FFFFFF;
+    --blue:#2C5FD6; --blue-soft:#E8EFFC;
+    --amber:#B26A00; --amber-soft:#FFF2D6;
+    --green:#0E7C66; --green-soft:#DDF2EC;
+    --red:#B42318; --red-soft:#FDE9E7;
+    --gray:#8A93A2; --gray-soft:#ECEFF3;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+       background:var(--bg); color:var(--ink); -webkit-text-size-adjust:100%}
+
+  header{position:sticky; top:0; z-index:10; background:#1B2436; color:#fff; padding:10px 16px 0}
+  .top{display:flex; align-items:center; gap:12px; flex-wrap:wrap}
+  .top h1{font-size:17px; margin:0; font-weight:700; letter-spacing:-0.2px}
+  .fresh{font-size:13px; color:#B9C2D0; margin-left:auto; display:flex; align-items:center; gap:8px}
+  .dot{width:8px; height:8px; border-radius:50%; background:#3DD68C; display:inline-block}
+  .dot.stale{background:#F0A500}
+  .dot.off{background:#E2564A}
+
+  .tabs{display:flex; gap:6px; overflow-x:auto; padding:10px 0 0; -webkit-overflow-scrolling:touch}
+  .tabs button{flex:0 0 auto; background:#2C3547; color:#C7CEDA; border:0; border-radius:8px 8px 0 0;
+    padding:9px 16px; font-size:15px; font-weight:600; cursor:pointer; font-family:inherit}
+  .tabs button.on{background:var(--bg); color:var(--ink)}
+  .tabs button .n{font-size:12px; color:#8A93A2; margin-left:6px; font-weight:500}
+  .tabs button.on .n{color:var(--muted)}
+  .tabs button.warn{color:#FFC9C4}
+  .tabs button.warn.on{color:var(--red)}
+
+  .bar{background:#fff; border-bottom:1px solid var(--line); padding:10px 16px;
+       display:flex; gap:18px; align-items:center; flex-wrap:wrap; font-size:15px}
+  .bar b{font-size:19px; font-weight:700; margin-left:4px}
+  .bar .warnbox{color:var(--red); font-weight:700}
+  .bar .sp{margin-left:auto; display:flex; gap:8px}
+  .bar .sp button{border:1px solid var(--line); background:#fff; border-radius:8px; padding:7px 12px;
+    font-size:14px; cursor:pointer; font-family:inherit; color:var(--muted)}
+  .bar .sp button.on{background:var(--ink); color:#fff; border-color:var(--ink)}
+
+  main{padding:14px}
+  .grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:10px}
+
+  .card{background:var(--card); border:1px solid var(--line); border-left:6px solid var(--gray);
+        border-radius:12px; padding:11px 13px; min-height:104px; position:relative;
+        display:flex; flex-direction:column; gap:3px}
+  .card .nm{font-size:20px; font-weight:700; letter-spacing:-0.3px; line-height:1.2}
+  .card .sid{font-size:12px; color:var(--muted)}
+  .card .st{font-size:14px; font-weight:600; margin-top:2px}
+  .card .sub{font-size:12px; color:var(--muted); margin-top:auto}
+  .card .lv{position:absolute; top:9px; right:10px; background:var(--red); color:#fff;
+    font-size:17px; font-weight:800; min-width:32px; height:32px; border-radius:16px;
+    display:flex; align-items:center; justify-content:center; padding:0 8px}
+  .card .flags{font-size:12px; color:var(--red); font-weight:600}
+
+  .card.off{border-left-color:var(--gray); background:var(--gray-soft); opacity:.85}
+  .card.off .nm{color:var(--muted); font-weight:600}
+  .card.work{border-left-color:var(--blue)}
+  .card.work .st{color:var(--blue)}
+  .card.dr{border-left-color:var(--amber); background:var(--amber-soft)}
+  .card.dr .st{color:var(--amber)}
+  .card.done{border-left-color:var(--green); background:var(--green-soft)}
+  .card.done .st{color:var(--green)}
+  .card.leave{border-color:var(--red); border-left-color:var(--red); background:var(--red-soft)}
+  .card.quiet{outline:2px dashed #E2564A; outline-offset:-3px}
+
+  .msg{background:#fff; border:1px solid var(--line); border-radius:12px; padding:22px; margin:16px;
+       font-size:16px; line-height:1.7}
+  .msg code{background:var(--gray-soft); padding:2px 6px; border-radius:5px; font-size:14px}
+  .msg h2{margin:0 0 10px; font-size:19px}
+  .empty{color:var(--muted); padding:30px 4px; font-size:16px}
+  @media (max-width:520px){
+    .grid{grid-template-columns:repeat(auto-fill, minmax(150px, 1fr))}
+    .card .nm{font-size:18px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="top">
+    <h1>수행평가 현황</h1>
+    <div class="fresh"><span class="dot" id="dot"></span><span id="fresh">불러오는 중…</span></div>
+  </div>
+  <div class="tabs" id="tabs"></div>
+</header>
+
+<div class="bar" id="bar" hidden></div>
+<main><div id="body"></div></main>
+
+<script>
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzq2ub-CXiHUErkWcvN7YgPbNacIoDZZlT6jNsRSKB6G1nWOivxRzfjlAIp83kQdPvl4Q/exec";
+const REFRESH_SEC = 7;          // 몇 초마다 다시 읽을지
+const QUIET_MIN = 3;            // 이만큼 저장이 없으면 "조용함"으로 본다
+
+const q = new URLSearchParams(location.search);
+const KEY = q.get("k") || "";
+const $ = (id) => document.getElementById(id);
+
+let cls = q.get("cls") || localStorage.getItem("t_cls") || "";
+let sortBy = localStorage.getItem("t_sort") || "sid";
+let lastOk = 0, timer = null, busy = false;
+
+const LABEL = { research: "조사 중", draft: "초안 작성 중", draftDone: "초안 제출", final: "최종 작성 중", done: "최종 제출" };
+
+function jsonp(params, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const cb = "tcb" + Date.now() + Math.floor(Math.random() * 1e6);
+    const s = document.createElement("script");
+    let done = false;
+    const cleanup = () => { try { delete window[cb]; } catch (e) { window[cb] = undefined; } s.remove(); };
+    window[cb] = (d) => { done = true; cleanup(); resolve(d); };
+    s.onerror = () => { if (!done) { done = true; cleanup(); reject(new Error("load")); } };
+    const p = new URLSearchParams(params); p.set("callback", cb);
+    s.src = SCRIPT_URL + "?" + p.toString();
+    document.head.appendChild(s);
+    setTimeout(() => { if (!done) { done = true; cleanup(); reject(new Error("timeout")); } }, timeoutMs || 12000);
+  });
+}
+
+function ago(ms) {
+  if (!ms) return "";
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 60) return s + "초 전";
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + "분 전";
+  return Math.floor(m / 60) + "시간 " + (m % 60) + "분 전";
+}
+function clock(ms) {
+  if (!ms) return "";
+  const d = new Date(ms);
+  return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
+}
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+function kindOf(st) {
+  if (!st.ph) return "off";
+  if (st.ph === "done") return "done";
+  if (st.ph === "draftDone") return "dr";
+  return "work";
+}
+function quiet(st) {
+  if (!st.at) return 0;
+  if (st.ph === "done" || st.ph === "draftDone" || !st.ph) return 0;
+  const m = Math.floor((Date.now() - st.at) / 60000);
+  return m >= QUIET_MIN ? m : 0;
+}
+
+function render(d) {
+  // 반 목록
+  const tabs = $("tabs");
+  const names = d.classes || [];
+  if (!cls && names.length) cls = names[0];
+  tabs.innerHTML = names.map((c) =>
+    '<button data-c="' + esc(c) + '" class="' + (c === cls ? "on" : "") + '">' + esc(c) + "</button>").join("");
+  Array.prototype.forEach.call(tabs.querySelectorAll("button"), (b) => {
+    b.onclick = () => { cls = b.dataset.c; localStorage.setItem("t_cls", cls); load(true); };
+  });
+
+  const list = (d.students || []).slice();
+  const on = list.filter((s) => s.ph).length;
+  const leaved = list.filter((s) => s.lv > 0);
+  const drafted = list.filter((s) => s.ph === "draftDone" || s.ph === "final" || s.ph === "done").length;
+  const doneN = list.filter((s) => s.ph === "done").length;
+  const quietN = list.filter((s) => quiet(s)).length;
+
+  const bar = $("bar");
+  bar.hidden = false;
+  bar.innerHTML =
+    "<div>접속<b>" + on + " / " + list.length + "</b></div>" +
+    "<div>초안 제출<b>" + drafted + "</b></div>" +
+    "<div>최종 제출<b>" + doneN + "</b></div>" +
+    '<div class="' + (leaved.length ? "warnbox" : "") + '">이탈<b>' + leaved.length + "명</b></div>" +
+    (quietN ? '<div class="warnbox">조용함<b>' + quietN + "명</b></div>" : "") +
+    '<div class="sp">' +
+      '<button data-s="sid" class="' + (sortBy === "sid" ? "on" : "") + '">학번 순</button>' +
+      '<button data-s="leave" class="' + (sortBy === "leave" ? "on" : "") + '">이탈 많은 순</button>' +
+    "</div>";
+  Array.prototype.forEach.call(bar.querySelectorAll("[data-s]"), (b) => {
+    b.onclick = () => { sortBy = b.dataset.s; localStorage.setItem("t_sort", sortBy); render(lastData); };
+  });
+
+  if (sortBy === "leave") list.sort((a, b) => (b.lv - a.lv) || (b.hg - a.hg) || (Number(a.sid) - Number(b.sid)));
+  else list.sort((a, b) => Number(a.sid) - Number(b.sid));
+
+  if (!list.length) {
+    $("body").innerHTML = '<div class="empty">이 반에서 아직 접속한 학생이 없습니다. "명단" 탭에 학번과 이름을 넣어 두면 미접속 학생도 여기 보입니다.</div>';
+    return;
+  }
+
+  $("body").innerHTML = '<div class="grid">' + list.map((s) => {
+    const qm = quiet(s);
+    const cn = ["card", kindOf(s)];
+    if (s.lv > 0) cn.push("leave");
+    if (qm) cn.push("quiet");
+    const flags = [];
+    if (s.hg > 0) flags.push("한글 " + s.hg);
+    if (s.bs > 0) flags.push("대량 " + s.bs);
+    if (s.dup) flags.push("중복");
+    let sub = "";
+    if (!s.ph) sub = "아직 안 들어옴";
+    else if (s.ph === "done") sub = "제출 " + clock(s.fn);
+    else if (s.ph === "draftDone") sub = "초안 제출 " + clock(s.dr);
+    else sub = (qm ? "⏸ " + qm + "분째 조용함" : ago(s.at) + " 저장") + (s.sn ? " · " + s.sn + "문장" : "");
+    return '<div class="' + cn.join(" ") + '">' +
+      (s.lv > 0 ? '<div class="lv">' + s.lv + "</div>" : "") +
+      '<div class="nm">' + esc(s.nm || "(이름 없음)") + "</div>" +
+      '<div class="sid">' + esc(s.sid) + "</div>" +
+      '<div class="st">' + esc(LABEL[s.ph] || "미접속") + "</div>" +
+      (flags.length ? '<div class="flags">' + esc(flags.join(" · ")) + "</div>" : "") +
+      '<div class="sub">' + esc(sub) + "</div>" +
+      "</div>";
+  }).join("") + "</div>";
+}
+
+let lastData = null;
+
+function showMsg(html) { $("body").innerHTML = '<div class="msg">' + html + "</div>"; $("bar").hidden = true; }
+
+async function load(immediate) {
+  if (busy) return;
+  busy = true;
+  try {
+    const d = await jsonp({ action: "monitor", k: KEY, cls: cls });
+    if (!d || d.error) {
+      if (d && d.error === "NO_TEACHER_KEY") {
+        showMsg("<h2>아직 준비가 안 되었습니다</h2>Apps Script 편집기에서 <code>newTeacherKey()</code>를 한 번 실행하세요. " +
+                "실행 로그에 이 화면의 주소가 찍힙니다. 그 주소를 북마크해서 여세요.");
+      } else if (d && d.error === "BAD_KEY") {
+        showMsg("<h2>열쇠가 맞지 않습니다</h2>주소 뒤의 <code>?k=…</code> 부분이 빠졌거나 예전 것입니다. " +
+                "편집기에서 <code>newTeacherKey()</code>를 실행해 나온 주소로 다시 여세요.");
+      } else {
+        showMsg("<h2>읽지 못했습니다</h2>" + esc((d && d.error) || "알 수 없는 오류") + "<br>잠시 뒤 다시 시도합니다.");
+      }
+      setFresh(false);
+      return;
+    }
+    lastData = d;
+    lastOk = Date.now();
+    render(d);
+    setFresh(true);
+  } catch (e) {
+    setFresh(false);
+  } finally { busy = false; }
+}
+
+function setFresh(ok) {
+  const dot = $("dot"), t = $("fresh");
+  if (!lastOk) { t.textContent = ok ? "방금 갱신" : "연결 안 됨"; dot.className = "dot" + (ok ? "" : " off"); return; }
+  const s = Math.round((Date.now() - lastOk) / 1000);
+  t.textContent = (s < 5 ? "방금" : s + "초 전") + " 갱신 · " + REFRESH_SEC + "초마다";
+  dot.className = "dot" + (!ok ? " off" : s > REFRESH_SEC * 3 ? " stale" : "");
+}
+
+if (!KEY) {
+  showMsg("<h2>열쇠가 필요합니다</h2>이 화면은 학생 현황이 보이므로 주소에 열쇠가 있어야 열립니다.<br><br>" +
+          "Apps Script 편집기에서 <code>newTeacherKey()</code>를 한 번 실행하면 실행 로그에 " +
+          "<code>…teacher.html?k=…</code> 주소가 찍힙니다. 그 주소를 북마크해서 여세요.");
+} else {
+  load(true);
+  timer = setInterval(load, REFRESH_SEC * 1000);
+  setInterval(() => setFresh(true), 1000);
+  // 화면을 다시 보면 바로 한 번 읽습니다
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) load(true); });
+}
+</script>
+</body>
+</html>

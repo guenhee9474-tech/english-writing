@@ -19,6 +19,10 @@ class Q(socketserver.TCPServer): allow_reuse_address = True
 srv = Q(('127.0.0.1', 8880), Handler)
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 
+# 윈도우 기본 콘솔(cp949)에서 이모지·특수문자 때문에 출력이 죽지 않게 한다
+try: sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except Exception: pass
+
 from playwright.sync_api import sync_playwright
 
 html = open(os.path.join(DOCS, 'index.html'), encoding='utf-8').read()
@@ -180,8 +184,11 @@ def check_server_file():
           'rebuildOverview' not in dopost,
           '제출이 몰릴 때 가장 무거운 작업이 겹쳐 실행 시간 제한을 넘긴다')
     check('총괄 갱신이 자동으로 돈다',
-          gs.count('maybeRebuildOverview(false);') == 3 and 'function maybeRebuildOverview' in gs,
-          '자동 저장·초안 제출·최종 제출 세 곳에서 불러야 한다: ' + str(gs.count('maybeRebuildOverview(false);')))
+          dopost.count('maybeRebuildOverview(') == 3 and 'function maybeRebuildOverview' in gs,
+          '자동 저장·초안 제출·최종 제출 세 곳에서 불러야 한다: ' + str(dopost.count('maybeRebuildOverview(')))
+    check('제출은 기다리지 않고 바로 갱신한다',
+          dopost.count('maybeRebuildOverview(true)') == 2 and dopost.count('maybeRebuildOverview(false)') == 1,
+          '초안·최종 제출은 즉시(true), 자동 저장만 간격을 지킨다(false)')
     # 주석을 걷어낸 뒤 검사한다 (설명 문장에 적힌 ScriptApp 까지 잡히면 안 되므로)
     code = re.sub(r'/\*.*?\*/', '', gs, flags=re.S)
     code = '\n'.join(ln.split('//')[0] for ln in code.split('\n'))
