@@ -44,6 +44,10 @@ def mock(route):
         cls = g('cls')
         out = {'ok': True, 'at': NOW, 'cls': cls, 'classes': ['1학년 1반', '1학년 2반'],
                'students': STUDENTS if (not cls or cls == '1학년 1반') else []}
+    if 'callback' not in q:      # 쿠키 없는 fetch 방식
+        route.fulfill(status=200, content_type='application/json',
+                      headers={'Access-Control-Allow-Origin': '*'}, body=json.dumps(out))
+        return
     route.fulfill(status=200, content_type='application/javascript', body=cb + '(' + json.dumps(out) + ')')
 
 fails = []

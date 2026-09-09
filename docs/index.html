@@ -503,7 +503,7 @@
    교사용 설정 (여기만 고치면 됩니다)
    ════════════════════════════════════════════════════════════════ */
 const CONFIG = {
-  version: "2026-09-09i (빠른 현황)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
+  version: "2026-09-10 (구글 계정 문제 해결)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
   title: "Good for All of Us: A Place for Everyone",
   subtitle: "1학년 2학기 영어 쓰기 수행평가",
 
@@ -1268,6 +1268,49 @@ function jsonp(params, timeoutMs) {
     setTimeout(() => { if (!done) { done = true; cleanup(); reject(new Error("timeout")); } }, timeoutMs || 6000);
   });
 }
+/* ── 서버와 이야기하는 방법 ────────────────────────────────────────
+   구글 쿠키를 보내지 않는 fetch 를 씁니다(credentials:"omit").
+   쿠키를 보내면 구글이 "어느 계정으로 실행할지" 고르려고 주소를 /macros/u/1/s/... 로 바꾸는데,
+   그 계정이 이 스크립트를 열 권한이 없으면 "파일을 열 수 없습니다"가 뜨면서 아무것도 안 됩니다.
+   구글 계정이 두 개 이상 로그인된 기기에서 실제로 일어납니다(2026-09-10).
+   쿠키를 안 보내면 구글은 익명 요청으로 처리하므로 이 문제가 아예 생기지 않습니다.
+   fetch 가 안 되는 옛 브라우저를 대비해 JSONP 를 예비로 남겨 둡니다. */
+
+// 읽기. { …응답 } 을 돌려주고, 못 읽으면 예전 방식(JSONP)으로 한 번 더 시도합니다.
+async function askServer(params, timeoutMs) {
+  const url = CONFIG.submit.scriptUrl;
+  if (!url) throw new Error("no url");
+  const q = new URLSearchParams(params);
+  q.set("token", CONFIG.submit.token || "");
+  if (state.sid && !q.has("key")) q.set("key", getKey(state.sid));
+  const ctl = ("AbortController" in window) ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs || 15000) : null;
+  try {
+    const r = await fetch(url + "?" + q.toString(), { credentials: "omit", signal: ctl ? ctl.signal : undefined });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return JSON.parse(await r.text());
+  } catch (e) {
+    return await jsonp(params, timeoutMs);      // 예비 수단
+  } finally { if (timer) clearTimeout(timer); }
+}
+
+// 쓰기. 서버가 돌려준 한 마디("OK_DRAFT" 등)를 그대로 돌려줍니다. 못 읽으면 "" 입니다.
+async function sendToServer(body) {
+  const url = CONFIG.submit.scriptUrl;
+  // keepalive 는 64KB 까지만 됩니다. 글이 길면 keepalive 없이 보냅니다(화면을 닫는 순간이 아니면 문제없음).
+  const big = body.toString().length > 60000;
+  try {
+    const r = await fetch(url, { method: "POST", credentials: "omit", body: body, keepalive: !big });
+    return (await r.text()).trim();
+  } catch (e) {
+    // 응답을 못 읽었어도 저장 자체는 갔을 수 있습니다. 부르는 쪽에서 확인합니다.
+    try { await fetch(url, { method: "POST", mode: "no-cors", credentials: "omit", body: body, keepalive: !big }); } catch (e2) {}
+    return "";
+  }
+}
+const OK_REPLY = { OK: 1, OK_SAVE: 1, OK_DRAFT: 1, OK_REOPEN: 1 };
+const BAD_REPLY = { NO_KEY: 1, UNKNOWN_KEY: 1, BAD_TOKEN: 1, BAD_PHASE: 1, ERROR: 1 };
+
 async function postToServer(kind, reason) {
   const cfg = CONFIG.submit;
   if (!cfg.scriptUrl) return null;
@@ -1281,12 +1324,14 @@ async function postToServer(kind, reason) {
   body.append("final", state.final); body.append("meta", buildMeta(reason, kind));
   body.append("bank", JSON.stringify(BANK.map((w) => ({ label: w.label, source: w.re.source, flags: w.re.flags }))));
   body.append("data", JSON.stringify(state));
-  await fetch(cfg.scriptUrl, { method: "POST", mode: "no-cors", body, keepalive: true });
+  const reply = await sendToServer(body);
+  // 서버 답을 읽었으면 그것이 가장 확실합니다. 실패라고 답하면 굳이 다시 확인하지 않습니다.
+  if (BAD_REPLY[reply]) return false;
   // 저장 확인. 서버가 돌려주는 draftAt 은 [초안제출시각] 칸이라 제출이 실제로 기록되었을 때만 값이 있습니다.
   // (예전에는 [저장시각]을 봤기 때문에 1분마다 도는 자동 저장 덕분에 제출이 실패해도 성공으로 보였습니다.)
   // 시각이 오래되었으면(= 지난번 제출) 실패로 봅니다. 초안은 서버가 기록한 단계까지 함께 확인합니다.
   try {
-    const r = await jsonp({ action: "check", sid: state.sid, name: state.name }, 8000);
+    const r = await askServer({ action: "check", sid: state.sid, name: state.name }, 12000);
     lastCheck = r;
     const at = kind === "draft" ? r.draftAt : r.finalAt;
     if (!at) return false;
@@ -1297,7 +1342,7 @@ async function postToServer(kind, reason) {
 }
 // 로그인: 서버에 저장된 상태를 가져온다. { data, phase, finalAt, error, dup, name }
 async function fetchRemote(sid, name) {
-  const r = await jsonp({ action: "load", sid, name, key: getKey(sid) }, 8000);
+  const r = await askServer({ action: "load", sid, name, key: getKey(sid) }, 15000);
   if (!r) return null;
   if (typeof r.finalOpen === "boolean") finalOpen = r.finalOpen;
   if (r.key) setKey(sid, r.key);          // 새로 발급되었거나 확인된 열쇠
@@ -1331,12 +1376,13 @@ async function autosaveToServer(force) {
     body.append("meta", buildLiveMeta());
     body.append("brainstorm", buildBrainstorm()); body.append("draft", buildDraft()); body.append("final", state.final);
     body.append("data", JSON.stringify(state));
-    await fetch(cfg.scriptUrl, { method: "POST", mode: "no-cors", body, keepalive: true });
+    const reply = await sendToServer(body);
+    if (BAD_REPLY[reply]) { showBanner("선생님 서버가 저장을 받지 않고 있습니다(" + reply + "). 선생님께 알려 주세요.", true); saveVerified = true; return; }
     // 이 시간 첫 저장은 한 번 확인합니다. 토큰이 안 맞거나 열쇠가 틀리면 20분 동안 모르고 쓰게 되기 때문입니다.
     if (!saveVerified) {
       saveVerified = true;
       try {
-        const r = await jsonp({ action: "check", sid: state.sid, name: state.name }, 8000);
+        const r = await askServer({ action: "check", sid: state.sid, name: state.name }, 12000);
         if (!r || r.error || (!r.savedAt && !r.draftAt && !r.finalAt)) {
           showBanner("선생님 서버에 저장된 것이 확인되지 않습니다. 글은 이 아이패드에 남아 있습니다. 선생님께 알려 주세요.", true);
         }
@@ -1355,7 +1401,7 @@ async function reopenOnServer(to) {
     body.append("meta", "교사 제출 취소 → " + (PHASE_LABEL[to] || to) + " | " + buildLiveMeta());
     body.append("brainstorm", buildBrainstorm()); body.append("draft", buildDraft()); body.append("final", state.final);
     body.append("data", JSON.stringify(state));
-    await fetch(cfg.scriptUrl, { method: "POST", mode: "no-cors", body, keepalive: true });
+    await sendToServer(body);
   } catch (e) {}
 }
 // 서버가 저장을 받지 않는 상태(열쇠 없음)를 학생에게 한 번만 알립니다.
@@ -1542,7 +1588,7 @@ async function dictLookup() {
   if (c.maxPerPhase && dictUsedThisPhase() >= c.maxPerPhase) { toast("이 단계에서 찾을 수 있는 횟수를 다 썼습니다."); return; }
   $("dictBtn").disabled = true; $("dictBtn").textContent = "찾는 중…";
   try {
-    const r = await jsonp({ action: "dict", q, sid: state.sid, name: state.name, phase: state.phase }, 9000);
+    const r = await askServer({ action: "dict", q, sid: state.sid, name: state.name, phase: state.phase }, 12000);
     if (!r || r.error) throw new Error(r && r.error || "no result");
     state.lookups.push({ t: Date.now(), p: state.phase, q: r.q || q, a: r.a || "" });
     save(); markDirty(); refresh();

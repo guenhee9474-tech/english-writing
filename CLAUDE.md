@@ -34,10 +34,15 @@
 
 ## 통신 방식 (바꾸지 말 것)
 
-- 페이지 → 서버 쓰기: `fetch(scriptUrl, {method:"POST", mode:"no-cors", body: URLSearchParams})`. 응답을 읽을 수 없으므로 저장 직후 `action=check`로 읽어서 확인한다.
+- **모든 요청은 `credentials:"omit"` 으로 보낸다. 이것이 이 프로젝트에서 가장 중요한 규칙이다.**
+  쿠키를 보내면 구글이 계정을 고르려고 주소를 `/macros/u/1/s/...` 로 바꾸고, 그 계정에 권한이 없으면 "파일을 열 수 없습니다"가 뜨면서 **아무것도 동작하지 않는다**(2026-09-10 실제로 겪음). 구글 계정이 두 개 이상 로그인된 기기에서 발생한다. 쿠키를 안 보내면 익명 요청이 되어 이 문제가 아예 없다.
+- 페이지 → 서버 쓰기: `sendToServer(body)` — `fetch(scriptUrl, {method:"POST", credentials:"omit", body})`. **응답을 읽을 수 있다**(`OK_SAVE`/`OK_DRAFT`/`OK`/`OK_REOPEN`, 실패는 `NO_KEY`/`UNKNOWN_KEY`/`BAD_TOKEN`/`BAD_PHASE`/`ERROR`). 실패 답이 오면 곧바로 실패로 처리하고, 답을 못 읽었을 때만 `action=check`로 확인한다.
+  `keepalive` 는 64KB 상한이 있어 본문이 크면 끄고 보낸다.
 - **확인은 반드시 `check`의 `draftAt`([초안제출시각] 칸)과 `phase`를 함께 본다.** `[저장시각]`(`COL.at`)을 쓰면 60초마다 도는 자동 저장 때문에 제출이 실패해도 항상 성공으로 보인다. `tests/mocktest.py`의 T0가 이것을 검사한다.
 - `phase` 값: `save`(자동 저장) / `draft` / `final` / `reopen`(교사 제출 취소, `to=`로 되돌릴 단계). 그 밖의 값은 서버가 `BAD_PHASE`로 거절한다.
-- 페이지 → 서버 읽기: **JSONP**(`<script src=...&callback=cb>`). Apps Script는 CORS 헤더를 주지 않으므로 fetch로 바꾸면 깨진다. 액션: `load`, `check`, `dict`.
+- 페이지 → 서버 읽기: `askServer(params)` — 쿠키 없는 `fetch`. **Apps Script 는 CORS 를 허용한다**(2026-09-10 실측: `r.type === "cors"`, 본문 읽힘). `callback` 이 없으면 서버가 그냥 JSON 을 돌려준다.
+  JSONP(`<script src=…&callback=cb>`)는 **예비 수단으로만** 남아 있다. `<script>` 태그는 쿠키를 함께 보내므로 위 문제가 그대로 재현된다. 되돌리지 말 것. 테스트가 JSONP 로 새는지 검사한다.
+  액션: `load`, `check`, `dict`, `monitor`(교사 현황 화면).
 - `token`은 소스에 보이는 값이라 보안 수단이 아니다(실수 방지용).
 
 ## 서버 시트 (제출명단 스프레드시트, 제출물 폴더 안)

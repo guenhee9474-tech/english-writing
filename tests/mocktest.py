@@ -38,6 +38,10 @@ finals = []      # 제출명단 한 줄씩: {sid,keyPrefix,at}
 posts = []       # 받은 POST 기록
 DROP = {'draft': False, 'save': False}   # 테스트에서 특정 제출을 잃어버리게 만드는 스위치
 
+CORS = {'Access-Control-Allow-Origin': '*'}
+# 읽기를 어떤 방식으로 했는지 센다. 새 방식(쿠키 없는 fetch)이 실제로 쓰여야 한다.
+uses = {'fetch': 0, 'jsonp': 0}
+
 def now_iso():
     # 실제 서버는 Date 를 JSON 으로 내보내므로 UTC ISO(Z) 가 된다
     return datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
@@ -78,31 +82,31 @@ def mock(route):
         ph = g('phase')
         posts.append({'phase': ph, 'sid': g('sid'), 'key': g('key'), 'bank': 'bank' in b, 'to': g('to')})
         if g('token') != TOKEN:
-            route.fulfill(status=200, body='BAD_TOKEN'); return
+            route.fulfill(status=200, headers=CORS, body='BAD_TOKEN'); return
         if not g('key'):
-            route.fulfill(status=200, body='NO_KEY'); return
+            route.fulfill(status=200, headers=CORS, body='NO_KEY'); return
         r = find(g('sid'), g('key'))
         if not r:
-            route.fulfill(status=200, body='UNKNOWN_KEY'); return
+            route.fulfill(status=200, headers=CORS, body='UNKNOWN_KEY'); return
         if DROP.get(ph):                     # 이 제출은 서버에서 잃어버린 것으로 흉내 낸다
-            route.fulfill(status=200, body='ERROR'); return
+            route.fulfill(status=200, headers=CORS, body='ERROR'); return
         if ph == 'save':
             write_row(r, b, g, json.loads(g('data') or '{}').get('phase', ''), False)
-            route.fulfill(status=200, body='OK_SAVE'); return
+            route.fulfill(status=200, headers=CORS, body='OK_SAVE'); return
         if ph == 'reopen':
             to = g('to')
             if to not in ORDER:
-                route.fulfill(status=200, body='BAD_PHASE'); return
+                route.fulfill(status=200, headers=CORS, body='BAD_PHASE'); return
             write_row(r, b, g, to, True)
-            route.fulfill(status=200, body='OK_REOPEN'); return
+            route.fulfill(status=200, headers=CORS, body='OK_REOPEN'); return
         if ph == 'draft':
             write_row(r, b, g, 'draftDone', True)
-            route.fulfill(status=200, body='OK_DRAFT'); return
+            route.fulfill(status=200, headers=CORS, body='OK_DRAFT'); return
         if ph != 'final':
-            route.fulfill(status=200, body='BAD_PHASE'); return
+            route.fulfill(status=200, headers=CORS, body='BAD_PHASE'); return
         write_row(r, b, g, 'done', True)
         finals.append({'sid': g('sid'), 'kp': g('key')[:6], 'at': now_iso()})
-        route.fulfill(status=200, body='OK'); return
+        route.fulfill(status=200, headers=CORS, body='OK'); return
 
     # ── 읽기 (JSONP) ──
     cb = q.get('callback', ['cb'])[0]
@@ -153,6 +157,12 @@ def mock(route):
         out = {'q': g('q'), 'a': 'ramp', 'dir': 'ko→en'} if find(sid, key) else {'error': 'NO_KEY'}
     else:
         out = {'ok': True}
+    # 실제 서버처럼, callback 이 없으면 그냥 JSON 으로 돌려준다 (쿠키 없는 fetch 가 쓰는 방식)
+    uses['jsonp' if 'callback' in q else 'fetch'] += 1
+    if 'callback' not in q:
+        route.fulfill(status=200, content_type='application/json',
+                      headers={'Access-Control-Allow-Origin': '*'}, body=json.dumps(out))
+        return
     route.fulfill(status=200, content_type='application/javascript', body=cb + '(' + json.dumps(out) + ')')
 
 # ── 도우미 ────────────────────────────────────────────────────────
@@ -508,6 +518,10 @@ with sync_playwright() as p:
     allerrs = {'A': A.errs, 'C': C.errs}
     check('페이지 오류가 없다', not any(allerrs.values()), allerrs)
     check('토큰이 맞지 않는 요청이 없다', not any(x for x in posts if x.get('token') == 'bad'))
+    # 구글 다중 로그인(/u/1/) 문제를 피하려면 반드시 쿠키 없는 fetch 를 써야 한다.
+    check('읽기가 쿠키 없는 방식(fetch)으로 나간다', uses['fetch'] > 0, uses)
+    check('예전 방식(JSONP)으로 새지 않는다', uses['jsonp'] == 0,
+          str(uses) + ' — JSONP 는 <script> 태그라 구글 쿠키가 함께 가고, 계정이 여러 개면 실패한다')
     b.close()
 
 srv.shutdown()

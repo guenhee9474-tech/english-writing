@@ -190,7 +190,8 @@ function doPost(e) {
 function doGet(e) {
   const p = (e && e.parameter) || {};
   const cb = p.callback;
-  if (!cb) return textOut("작성 페이지의 제출을 받는 주소입니다. 정상 작동 중. 최종 단계: " + (isFinalOpen() ? "열림" : "닫힘"));
+  // 그냥 주소만 열어 본 경우 (사람이 확인용으로 열었을 때)
+  if (!cb && !p.action) return textOut("작성 페이지의 제출을 받는 주소입니다. 정상 작동 중. 최종 단계: " + (isFinalOpen() ? "열림" : "닫힘"));
   let out = {};
   try {
     // 선생님 현황 화면은 학생용 token 이 아니라 자기 열쇠(k)로 확인합니다. 그래서 token 검사보다 먼저 봅니다.
@@ -207,6 +208,11 @@ function doGet(e) {
     else if (p.action === "session") out = { session: 1, finalOpen: isFinalOpen() };
     else out = { ok: true };
   } catch (err) { out = { error: String(err) }; }
+  // callback 이 없으면 그냥 JSON 으로 돌려줍니다.
+  // 작성 페이지는 쿠키를 보내지 않는 fetch 로 이 방식을 씁니다.
+  // (JSONP 는 <script> 태그라서 구글 쿠키가 함께 가고, 구글 계정이 여러 개 로그인되어 있으면
+  //  주소가 /macros/u/1/s/... 로 바뀌면서 "파일을 열 수 없습니다"가 납니다. 2026-09-10 실제로 겪음.)
+  if (!cb) return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
   const js = String(cb).replace(/[^\w$.]/g, "") + "(" + JSON.stringify(out) + ");";
   return ContentService.createTextOutput(js).setMimeType(ContentService.MimeType.JAVASCRIPT);
 }

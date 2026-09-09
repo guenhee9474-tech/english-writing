@@ -120,6 +120,23 @@ let lastOk = 0, lastErr = "", loading = false, busy = false, tries = 0;
 
 const LABEL = { research: "조사 중", draft: "초안 작성 중", draftDone: "초안 제출", final: "최종 작성 중", done: "최종 제출" };
 
+/* 구글 쿠키를 보내지 않는 fetch 를 먼저 씁니다.
+   쿠키를 보내면 구글이 계정을 고르려고 주소를 /macros/u/1/s/... 로 바꾸는데,
+   그 계정에 권한이 없으면 "파일을 열 수 없습니다"가 뜨면서 화면이 안 뜹니다(2026-09-10 실제로 겪음).
+   fetch 가 안 되면 예전 방식(JSONP)으로 한 번 더 시도합니다. */
+async function ask(params, timeoutMs) {
+  const q = new URLSearchParams(params);
+  const ctl = ("AbortController" in window) ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs || 15000) : null;
+  try {
+    const r = await fetch(SCRIPT_URL + "?" + q.toString(), { credentials: "omit", signal: ctl ? ctl.signal : undefined });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return JSON.parse(await r.text());
+  } catch (e) {
+    return await jsonp(params, timeoutMs);
+  } finally { if (timer) clearTimeout(timer); }
+}
+
 function jsonp(params, timeoutMs) {
   return new Promise((resolve, reject) => {
     const cb = "tcb" + Date.now() + Math.floor(Math.random() * 1e6);
@@ -243,7 +260,7 @@ async function load(immediate) {
   if (busy) return;
   busy = true; loading = true; tries++; tickFresh();
   try {
-    const d = await jsonp({ action: "monitor", k: KEY, cls: cls });
+    const d = await ask({ action: "monitor", k: KEY, cls: cls });
     if (!d || d.error) {
       if (d && d.error === "NO_TEACHER_KEY") {
         showMsg("<h2>아직 준비가 안 되었습니다</h2>Apps Script 편집기에서 <code>newTeacherKey()</code>를 한 번 실행하세요. " +
