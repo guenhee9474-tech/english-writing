@@ -340,11 +340,28 @@ function 사전켜기() {
     Logger.log("사전이 켜졌습니다.");
     Logger.log("  배고프다 → " + r.en + "   [" + r.pos + "] " + r.def);
     Logger.log("이제 학생 사전이 국립국어원 사전을 먼저 씁니다. 더 볼 것은 없습니다.");
-  } else {
-    Logger.log("인증키는 넣으셨는데 사전이 답하지 않았습니다.");
-    Logger.log("제출명단 파일의 [오류] 탭에 이유가 적혀 있습니다. 그 줄을 알려 주세요.");
-    Logger.log("그동안에도 학생 사전은 구글 번역으로 정상 동작합니다.");
+    return;
   }
+  // 실패했으면 무슨 일이 있었는지 그대로 보여 줍니다. 이 내용을 그대로 알려 주시면 됩니다.
+  Logger.log("인증키는 읽었는데 사전이 뜻을 주지 않았습니다. 아래 내용을 그대로 복사해서 알려 주세요.");
+  Logger.log("────────────────────────────────");
+  Logger.log("읽은 인증키: " + key.length + "자, 앞 6자 " + key.slice(0, 6) + "…");
+  try {
+    const url = KRDICT_URL + "?key=" + encodeURIComponent(key) + "&q=" + encodeURIComponent("배고프다") +
+                "&part=word&sort=dict&translated=y&trans_lang=1&num=10";
+    const res = UrlFetchApp.fetch(url, {
+      muteHttpExceptions: true, followRedirects: true,
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; SchoolWritingApp/1.0)" }
+    });
+    Logger.log("응답 코드: " + res.getResponseCode());
+    const body = String(res.getContentText() || "").replace(/\s+/g, " ").trim();
+    Logger.log("응답 길이: " + body.length + "자");
+    Logger.log("응답 내용: " + body.slice(0, 500));
+  } catch (e) {
+    Logger.log("호출 자체가 실패: " + String(e && e.message || e));
+  }
+  Logger.log("────────────────────────────────");
+  Logger.log("그동안에도 학생 사전은 구글 번역으로 정상 동작합니다.");
 }
 
 // XML 어디에 있든 item 들을 찾아 온다 (응답 구조가 조금 달라도 견디도록)
