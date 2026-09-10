@@ -295,6 +295,9 @@ function settingsSheet() {
   return sh;
 }
 
+// 보관해 둔 사전 결과를 한 번에 비우기 위한 판 번호. 사전켜기() 가 올립니다.
+function kdVer() { try { return PropertiesService.getScriptProperties().getProperty("kdVer") || "1"; } catch (e) { return "1"; } }
+
 function krdictKey() {
   let cache = null;
   try { cache = CacheService.getScriptCache(); } catch (e) {}
@@ -323,6 +326,8 @@ function 사전켜기() {
   const sh = settingsSheet();
   try { PropertiesService.getScriptProperties().deleteProperty("krdictKey"); } catch (e) {}
   try { CacheService.getScriptCache().remove("kdkey"); } catch (e) {}
+  // 예전에 실패했던 기억을 모두 버리고 새로 시작합니다
+  try { PropertiesService.getScriptProperties().setProperty("kdVer", String(Date.now())); } catch (e) {}
   const key = krdictKey();
   if (!key) {
     Logger.log("권한은 확인했습니다. 이제 인증키만 넣으면 됩니다.");
@@ -385,7 +390,7 @@ function xmlText(el, name) {
 function krdictLookup(q) {
   const key = krdictKey();
   if (!key) return null;
-  const cacheKey = "kd_" + q;
+  const cacheKey = "kd" + kdVer() + "_" + q;
   let cache = null;
   try { cache = CacheService.getScriptCache(); } catch (e) {}
   if (cache) {
@@ -431,7 +436,9 @@ function krdictLookup(q) {
     logError("사전(krdict) 호출", e, q);                     // 권한 미승인도 여기로 옵니다
     return null;                                            // 보관하지 않고 다음에 다시 시도
   }
-  if (cache) { try { cache.put(cacheKey, out ? JSON.stringify(out) : "0", 21600); } catch (e) {} }
+  // 찾은 뜻은 6시간, "못 찾음"은 20분만 기억합니다.
+  // 실패를 오래 기억하면 코드를 고쳐도 한참 동안 옛 결과가 나옵니다(2026-09-10 실제로 겪음).
+  if (cache) { try { cache.put(cacheKey, out ? JSON.stringify(out) : "0", out ? 21600 : 1200); } catch (e) {} }
   return out;
 }
 

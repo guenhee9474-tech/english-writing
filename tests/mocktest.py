@@ -242,6 +242,13 @@ def check_server_file():
           '안 보내면 Request Blocked(400) 이 온다')
     check('사전이 거절하면 오류 탭에 남긴다', '사전(krdict) 거절' in gs,
           '키 오류·값 오류·하루 한도 초과가 조용히 넘어가면 안 된다')
+    # 실패를 오래 기억하면 코드를 고쳐도 옛 결과가 계속 나온다 (2026-09-10 실제로 겪음)
+    keep = re.search(r'out \? 21600 : (\d+)', gs)
+    check('"못 찾음"은 오래 기억하지 않는다', keep is not None and int(keep.group(1)) <= 1800,
+          '찾은 뜻은 6시간, 못 찾음은 30분 이내여야 한다: ' + (keep.group(1) if keep else '없음'))
+    check('보관해 둔 사전 결과를 한 번에 비울 수 있다',
+          'function kdVer' in gs and '"kd" + kdVer()' in gs and 'setProperty("kdVer"' in gs,
+          '사전켜기 가 판 번호를 올려 옛 기억을 버린다')
     check('사전이 실패해도 번역으로 넘어간다',
           'return dictByTranslate(q);' in gs and 'logError("사전(krdict) 호출"' in gs,
           '권한 미승인·키 없음·응답 실패 모두 지금 방식으로 되돌아가야 한다')
