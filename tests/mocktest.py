@@ -154,7 +154,15 @@ def mock(route):
             f = next((x for x in reversed(finals) if x['sid'] == sid and x['kp'] == key[:6]), None)
             out['finalAt'] = f['at'] if f else None
     elif action == 'dict':
-        out = {'q': g('q'), 'a': 'ramp', 'dir': 'ko→en'} if find(sid, key) else {'error': 'NO_KEY'}
+        # 실제 서버처럼 확인 여부(sure)와 쓴 기본형(base)을 함께 돌려준다
+        if not find(sid, key):
+            out = {'error': 'NO_KEY'}
+        elif g('q') == '배고픈':          # 되돌림 확인이 안 되는 경우
+            out = {'q': g('q'), 'a': 'hungry', 'sure': True, 'base': '배고프다', 'back': '배고프다', 'dir': 'ko→en'}
+        elif g('q') == '수상한':          # 어떻게 해도 확인이 안 되는 경우
+            out = {'q': g('q'), 'a': 'award-winning', 'sure': False, 'base': '', 'back': '상을 받은', 'dir': 'ko→en'}
+        else:
+            out = {'q': g('q'), 'a': 'ramp', 'sure': True, 'base': '', 'back': g('q'), 'dir': 'ko→en'}
     else:
         out = {'ok': True}
     # 실제 서버처럼, callback 이 없으면 그냥 JSON 으로 돌려준다 (쿠키 없는 fetch 가 쓰는 방식)
@@ -208,6 +216,13 @@ def check_server_file():
           not re.search(r'teacherKey["\']?\s*[:=]\s*["\'][0-9a-f]{16,}', gs),
           '이 파일은 공개 저장소에 올라간다')
     check('진단 함수가 있다', 'function diagnose' in gs)
+    # 사전: 단어 하나를 그대로 번역하면 자주 틀린다. 기본형 시도 + 되돌림 확인이 있어야 한다.
+    check('사전이 기본형으로도 찾아 본다', 'function koBaseForm' in gs and 'koBaseForm(q)' in gs)
+    check('사전이 되돌려 확인한다', 'function sameWord' in gs and 'trCached(a, to, from)' in gs,
+          '번역 결과를 다시 한국어로 되돌려 원래 단어와 맞는지 본다')
+    check('사전 번역 결과를 보관해 호출을 줄인다', 'function trCached' in gs)
+    check('확인 여부를 학생에게 돌려준다', 'sure: !!r.sure' in gs)
+    check('사전 신뢰도를 직접 확인할 함수가 있다', 'function testDict' in gs)
     check('현황 화면 자료를 잠깐 보관해 재사용한다',
           'CacheService.getScriptCache()' in gs and 'mon_all' in gs and 'MON_CACHE_SEC' in gs,
           '3초마다 물어보므로 매번 시트를 열면 느리고 사용량이 많이 든다')
@@ -379,6 +394,16 @@ with sync_playwright() as p:
     check('초안 타이머가 20분으로 시작한다', near20(A.inner_text('#timer')), A.inner_text('#timer'))
     A.click('#dictTop'); A.fill('#dictQ', '경사로'); A.keyboard.press('Enter'); A.wait_for_timeout(500)
     check('사전이 뜻을 돌려준다', 'ramp' in A.inner_text('#dictOut'))
+    # 활용형은 기본형으로 찾아 주고, 확실하지 않으면 학생에게 알려야 한다
+    A.fill('#dictQ', '배고픈'); A.keyboard.press('Enter'); A.wait_for_timeout(600)
+    d = A.inner_text('#dictOut')
+    flat = lambda t: ' '.join(t.split())
+    check('활용형도 제 뜻을 찾는다', 'hungry' in d, flat(d)[:70])
+    check('어떤 기본형으로 찾았는지 보여 준다', '배고프다' in d, flat(d)[:70])
+    A.fill('#dictQ', '수상한'); A.keyboard.press('Enter'); A.wait_for_timeout(600)
+    d = A.inner_text('#dictOut')
+    check('확실하지 않은 뜻은 경고한다', '확실하지 않' in d, flat(d)[:80])
+    check('확실한 뜻에는 경고가 없다', d.count('확실하지 않') == 1, d.count('확실하지 않'))
     # 한 칸에 두 문장을 넣어도 위쪽 통계와 제출 창의 숫자가 같아야 한다
     type_line(A, 0, 0, 'Many students rely on the library. It is a place where they study.')
     A.wait_for_timeout(400)

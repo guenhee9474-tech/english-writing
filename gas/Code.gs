@@ -219,6 +219,69 @@ function doGet(e) {
 
 /* ────────────────────────── 단어 사전 ────────────────────────── */
 
+/* 구글 번역에 단어 하나만 던지면 자주 틀립니다. 특히 한국어 활용형이 그렇습니다.
+   실제로 "배고픈"을 그대로 물으면 "empty"가 돌아왔습니다(2026-09-10).
+   그래서 두 가지를 합니다.
+     1) 활용형이면 기본형으로도 물어본다 (배고픈 → 배고프다)
+     2) 나온 영어를 다시 한국어로 되돌려 원래 단어와 맞는지 확인한다
+   확인된 뜻만 그대로 보여 주고, 확인이 안 되면 학생에게 "확실하지 않다"고 알립니다. */
+
+// 같은 단어를 여러 학생이 찾으므로 번역 결과를 6시간 보관합니다 (번역 호출 수를 크게 줄입니다).
+function trCached(text, from, to) {
+  const key = "tr_" + from + to + "_" + text;
+  let cache = null;
+  try { cache = CacheService.getScriptCache(); } catch (e) {}
+  if (cache) { try { const hit = cache.get(key); if (hit !== null) return hit; } catch (e) {} }
+  const out = String(LanguageApp.translate(text, from, to) || "").trim();
+  if (cache) { try { cache.put(key, out, 21600); } catch (e) {} }
+  return out;
+}
+
+// 관형형(배고픈·좋은·하는)을 기본형(배고프다·좋다·하다)으로. 명사에 잘못 걸려도 아래 확인 단계가 걸러 냅니다.
+function koBaseForm(q) {
+  q = String(q || "");
+  if (!q || !/^[가-힣]+$/.test(q)) return "";
+  if (/다$/.test(q)) return "";
+  const ch = q.charAt(q.length - 1);
+  if (ch === "은" || ch === "는" || ch === "을") return q.slice(0, -1) + "다";
+  const code = q.charCodeAt(q.length - 1) - 0xAC00;
+  if (code < 0 || code > 11171) return "";
+  if (code % 28 === 4) return q.slice(0, -1) + String.fromCharCode(0xAC00 + code - 4) + "다";   // 받침 ㄴ
+  return "";
+}
+
+// 되돌린 뜻이 원래 단어와 같은 말인지 (토씨가 달라도 어간이 같으면 인정)
+function sameWord(a, b) {
+  a = String(a || "").replace(/\s+/g, "").toLowerCase();
+  b = String(b || "").replace(/\s+/g, "").toLowerCase();
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.indexOf(b) === 0 || b.indexOf(a) === 0) return true;
+  const n = Math.min(2, a.length, b.length);
+  return n >= 2 && a.slice(0, n) === b.slice(0, n);
+}
+
+// 실제 번역 부분만 따로 뺐습니다. testDict() 가 이것을 그대로 씁니다.
+function dictTranslate(q) {
+  const ko = /[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(q);
+  const from = ko ? "ko" : "en", to = ko ? "en" : "ko";
+  const cands = [q];
+  const base = ko ? koBaseForm(q) : "";
+  if (base && base !== q) cands.push(base);
+  let best = null;
+  for (let i = 0; i < cands.length; i++) {
+    const cand = cands[i];
+    const a = trCached(cand, from, to);
+    if (!a) continue;
+    const back = trCached(a, to, from);
+    const sure = sameWord(back, cand) || sameWord(back, q);
+    const item = { a: a, back: back, sure: sure, base: (cand === q ? "" : cand) };
+    if (!best || (sure && !best.sure)) best = item;
+    if (sure) break;                       // 확인된 뜻을 찾았으면 더 물어보지 않습니다
+  }
+  return best || { a: "", back: "", sure: false, base: "" };
+}
+
 // 단어 하나만 받는다. 띄어쓰기가 있거나 길면 거절 → 문장 번역기로 쓸 수 없음.
 function dictLookup(p) {
   const c = CFG.dict || {};
@@ -232,25 +295,45 @@ function dictLookup(p) {
   const key = "dict_" + sid;
   const used = Number(cache.get(key) || 0);
   if (c.maxPerStudent && used >= c.maxPerStudent) return { error: "LIMIT" };
-  const ko = /[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(q);
-  let a = "";
-  try { a = LanguageApp.translate(q, ko ? "ko" : "en", ko ? "en" : "ko"); } catch (e) { return { error: "TRANSLATE_FAIL" }; }
-  a = String(a || "").trim();
+  let r;
+  try { r = dictTranslate(q); } catch (e) { return { error: "TRANSLATE_FAIL" }; }
+  if (!r.a) return { error: "TRANSLATE_FAIL" };
   cache.put(key, String(used + 1), 21600);
+  const ko = /[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(q);
   try {
     const sh = dictSheet();
-    sh.appendRow([new Date(), sid, String(p.name || ""), String(p.phase || ""), q, a]);
+    sh.appendRow([new Date(), sid, String(p.name || ""), String(p.phase || ""), q, r.a,
+      (r.sure ? "확인됨" : "확인 안 됨") + (r.base ? " · 기본형 " + r.base : "") + " · 되돌림 " + r.back]);
   } catch (e) {}
-  return { q: q, a: a, dir: ko ? "ko→en" : "en→ko" };
+  return { q: q, a: r.a, sure: !!r.sure, base: r.base || "", back: r.back || "", dir: ko ? "ko→en" : "en→ko" };
+}
+
+/* 사전이 얼마나 믿을 만한지 직접 확인하는 함수입니다. 편집기에서 실행하면 실행 로그에 표가 찍힙니다.
+   CFG.dict.enabled 를 끄고 켤지 판단할 근거로 쓰세요. */
+function testDict() {
+  const words = ["배고픈", "배고프다", "경사로", "계단", "휠체어", "손잡이", "안전한", "불편한", "예쁜", "큰",
+                 "손", "눈", "밝은", "어려운", "도움", "이용하다",
+                 "ramp", "hungry", "stairs", "wheelchair", "safe", "convenient", "entrance", "rely"];
+  const out = ["찾은 단어 | 결과 | 되돌린 뜻 | 확인 | 쓴 기본형"];
+  words.forEach((w) => {
+    let r;
+    try { r = dictTranslate(w); } catch (e) { r = { a: "(실패: " + e.message + ")", back: "", sure: false, base: "" }; }
+    out.push(w + " | " + r.a + " | " + r.back + " | " + (r.sure ? "OK" : "의심") + " | " + (r.base || "-"));
+  });
+  const text = out.join("\n");
+  Logger.log(text);
+  return text;
 }
 function dictSheet() {
   const ss = SpreadsheetApp.openById(getLogSheet().getParent().getId());
   let sh = ss.getSheetByName(CFG.dict.logSheetName || "사전");
   if (!sh) {
     sh = ss.insertSheet(CFG.dict.logSheetName || "사전");
-    sh.appendRow(["시각", "학번", "이름", "단계", "찾은 단어", "결과"]);
+    sh.appendRow(["시각", "학번", "이름", "단계", "찾은 단어", "결과", "확인"]);
     sh.setFrozenRows(1);
   }
+  // 예전에 6칸으로 만들어진 시트에도 "확인" 칸 제목을 붙여 줍니다
+  try { if (!String(sh.getRange(1, 7).getValue() || "").trim()) sh.getRange(1, 7).setValue("확인").setFontWeight("bold"); } catch (e) {}
   return sh;
 }
 
