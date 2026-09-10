@@ -261,8 +261,115 @@ function sameWord(a, b) {
   return n >= 2 && a.slice(0, n) === b.slice(0, n);
 }
 
+/* ── 진짜 사전: 국립국어원 "한국어기초사전" (krdict) ──────────────────
+   구글 번역은 번역기라 단어 하나에 약합니다. krdict 는 사전이라 표제어·품사·뜻풀이를 줍니다.
+   한국어 → 영어만 됩니다(영어로 찾는 기능은 제공하지 않습니다).
+
+   켜는 법 (한 번만):
+     1) https://krdict.korean.go.kr/kor/openApi/openApiRegister 에서 이메일로 무료 인증키를 받습니다.
+     2) 편집기에서 setKrdictKey("받은키") 를 실행합니다.
+        이때 "외부 서비스 연결" 권한 승인 창이 뜨면 허용하세요.
+   인증키는 코드가 아니라 스크립트 속성에 저장합니다(이 파일은 공개 저장소에 올라갑니다).
+   키가 없거나 사전이 답하지 않으면 아무 일도 없다는 듯 예전 방식(구글 번역)으로 넘어갑니다.
+   그래서 이 기능을 넣어도 지금 동작이 나빠질 일은 없습니다. */
+
+const KRDICT_URL = "https://krdict.korean.go.kr/api/search";
+
+function krdictKey() { try { return PropertiesService.getScriptProperties().getProperty("krdictKey") || ""; } catch (e) { return ""; } }
+
+function setKrdictKey(k) {
+  k = String(k || "").trim();
+  if (!k) { Logger.log("인증키를 넣어 주세요. 예: setKrdictKey(\"발급받은키\")"); return; }
+  PropertiesService.getScriptProperties().setProperty("krdictKey", k);
+  Logger.log("인증키를 저장했습니다. 바로 시험해 봅니다…");
+  const r = krdictLookup("배고프다");
+  if (r) {
+    Logger.log("성공: 배고프다 → " + r.en + "  [" + r.pos + "] " + r.def);
+    Logger.log("이제 학생 사전이 국립국어원 사전을 먼저 씁니다. testDict() 로 전체를 확인해 보세요.");
+  } else {
+    Logger.log("사전이 답하지 않았습니다. 인증키가 맞는지, 승인 창을 허용했는지 확인하세요.");
+    Logger.log("그래도 학생 사전은 예전 방식(구글 번역)으로 정상 동작합니다.");
+  }
+}
+
+// XML 어디에 있든 item 들을 찾아 온다 (응답 구조가 조금 달라도 견디도록)
+function xmlItems(root) {
+  let items = root.getChildren("item");
+  if (items.length) return items;
+  const kids = root.getChildren();
+  for (let i = 0; i < kids.length; i++) {
+    const sub = kids[i].getChildren("item");
+    if (sub.length) return sub;
+  }
+  return [];
+}
+function xmlText(el, name) {
+  if (!el) return "";
+  const c = el.getChild(name);
+  return c ? String(c.getText() || "").trim() : "";
+}
+
+// 한국어 단어 하나를 사전에서 찾는다. 못 찾으면 null.
+function krdictLookup(q) {
+  const key = krdictKey();
+  if (!key) return null;
+  const cacheKey = "kd_" + q;
+  let cache = null;
+  try { cache = CacheService.getScriptCache(); } catch (e) {}
+  if (cache) {
+    try { const hit = cache.get(cacheKey); if (hit !== null) return hit === "0" ? null : JSON.parse(hit); } catch (e) {}
+  }
+  let out = null;
+  try {
+    const url = KRDICT_URL + "?key=" + encodeURIComponent(key) + "&q=" + encodeURIComponent(q) +
+                "&part=word&sort=dict&translated=y&trans_lang=1&num=3";
+    const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: true });
+    if (res.getResponseCode() === 200) {
+      const items = xmlItems(XmlService.parse(res.getContentText()).getRootElement());
+      for (let i = 0; i < items.length && !out; i++) {
+        const it = items[i];
+        const word = xmlText(it, "word");
+        if (word.replace(/[-^]/g, "") !== q) continue;      // 표제어가 정확히 같은 것만
+        const senses = it.getChildren("sense");
+        for (let j = 0; j < senses.length && !out; j++) {
+          const tr = senses[j].getChild("translation");
+          const en = xmlText(tr, "trans_word");
+          if (!en) continue;
+          out = { word: word, pos: xmlText(it, "pos"), en: en,
+                  def: xmlText(senses[j], "definition"), enDef: xmlText(tr, "trans_dfn") };
+        }
+      }
+    } else {
+      logError("사전(krdict) 응답", new Error("HTTP " + res.getResponseCode()), q);
+    }
+  } catch (e) {
+    logError("사전(krdict) 호출", e, q);                     // 권한 미승인도 여기로 옵니다
+    return null;                                            // 보관하지 않고 다음에 다시 시도
+  }
+  if (cache) { try { cache.put(cacheKey, out ? JSON.stringify(out) : "0", 21600); } catch (e) {} }
+  return out;
+}
+
 // 실제 번역 부분만 따로 뺐습니다. testDict() 가 이것을 그대로 씁니다.
 function dictTranslate(q) {
+  // 한국어면 진짜 사전을 먼저 본다. 원래 형태 → 기본형 순서.
+  if (/[가-힣]/.test(q)) {
+    const tries = [q];
+    const base = koBaseForm(q);
+    if (base && base !== q) tries.push(base);
+    for (let i = 0; i < tries.length; i++) {
+      const k = krdictLookup(tries[i]);
+      if (k && k.en) {
+        return { a: k.en, back: "", sure: true, base: (tries[i] === q ? "" : tries[i]),
+                 src: "사전", pos: k.pos, def: k.def, enDef: k.enDef };
+      }
+    }
+  }
+  return dictByTranslate(q);
+}
+
+// 사전에 없을 때 쓰는 예전 방식 (구글 번역 + 되돌림 확인)
+function dictByTranslate(q) {
   const ko = /[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(q);
   const from = ko ? "ko" : "en", to = ko ? "en" : "ko";
   const cands = [q];
@@ -275,11 +382,11 @@ function dictTranslate(q) {
     if (!a) continue;
     const back = trCached(a, to, from);
     const sure = sameWord(back, cand) || sameWord(back, q);
-    const item = { a: a, back: back, sure: sure, base: (cand === q ? "" : cand) };
+    const item = { a: a, back: back, sure: sure, base: (cand === q ? "" : cand), src: "번역", pos: "", def: "", enDef: "" };
     if (!best || (sure && !best.sure)) best = item;
     if (sure) break;                       // 확인된 뜻을 찾았으면 더 물어보지 않습니다
   }
-  return best || { a: "", back: "", sure: false, base: "" };
+  return best || { a: "", back: "", sure: false, base: "", src: "번역", pos: "", def: "", enDef: "" };
 }
 
 // 단어 하나만 받는다. 띄어쓰기가 있거나 길면 거절 → 문장 번역기로 쓸 수 없음.
@@ -303,9 +410,11 @@ function dictLookup(p) {
   try {
     const sh = dictSheet();
     sh.appendRow([new Date(), sid, String(p.name || ""), String(p.phase || ""), q, r.a,
-      (r.sure ? "확인됨" : "확인 안 됨") + (r.base ? " · 기본형 " + r.base : "") + " · 되돌림 " + r.back]);
+      (r.src || "번역") + " · " + (r.sure ? "확인됨" : "확인 안 됨") +
+      (r.base ? " · 기본형 " + r.base : "") + (r.pos ? " · " + r.pos : "") + (r.back ? " · 되돌림 " + r.back : "")]);
   } catch (e) {}
-  return { q: q, a: r.a, sure: !!r.sure, base: r.base || "", back: r.back || "", dir: ko ? "ko→en" : "en→ko" };
+  return { q: q, a: r.a, sure: !!r.sure, base: r.base || "", back: r.back || "",
+           src: r.src || "번역", pos: r.pos || "", def: r.def || "", dir: ko ? "ko→en" : "en→ko" };
 }
 
 /* 사전이 얼마나 믿을 만한지 직접 확인하는 함수입니다. 편집기에서 실행하면 실행 로그에 표가 찍힙니다.
@@ -314,11 +423,14 @@ function testDict() {
   const words = ["배고픈", "배고프다", "경사로", "계단", "휠체어", "손잡이", "안전한", "불편한", "예쁜", "큰",
                  "손", "눈", "밝은", "어려운", "도움", "이용하다",
                  "ramp", "hungry", "stairs", "wheelchair", "safe", "convenient", "entrance", "rely"];
-  const out = ["찾은 단어 | 결과 | 되돌린 뜻 | 확인 | 쓴 기본형"];
+  const out = ["사전 인증키: " + (krdictKey() ? "있음 (국립국어원 사전 사용)" : "없음 (구글 번역만 사용) → setKrdictKey(\"키\") 로 켜세요"),
+               "",
+               "찾은 단어 | 결과 | 출처 | 확인 | 쓴 기본형 | 품사 | 뜻풀이"];
   words.forEach((w) => {
     let r;
-    try { r = dictTranslate(w); } catch (e) { r = { a: "(실패: " + e.message + ")", back: "", sure: false, base: "" }; }
-    out.push(w + " | " + r.a + " | " + r.back + " | " + (r.sure ? "OK" : "의심") + " | " + (r.base || "-"));
+    try { r = dictTranslate(w); } catch (e) { r = { a: "(실패: " + e.message + ")", back: "", sure: false, base: "", src: "-" }; }
+    out.push(w + " | " + r.a + " | " + (r.src || "번역") + " | " + (r.sure ? "OK" : "의심") +
+             " | " + (r.base || "-") + " | " + (r.pos || "-") + " | " + String(r.def || "-").slice(0, 60));
   });
   const text = out.join("\n");
   Logger.log(text);

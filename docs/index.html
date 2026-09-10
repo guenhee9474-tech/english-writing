@@ -261,6 +261,7 @@
   .dict-item.unsure{background:var(--warn-soft);border-color:#EBD3A8}
   .dict-item .base{font-size:11px;color:var(--muted);margin-left:8px}
   .dict-item .warn{font-size:12px;color:var(--warn);margin-top:4px;line-height:1.4}
+  .dict-item .def{font-size:12px;color:var(--ink);margin-top:3px;line-height:1.45;opacity:.85}
   .dlg-input{width:100%;border:1px solid var(--line-strong);border-radius:8px;padding:10px 12px;font-size:18px;margin-bottom:16px;letter-spacing:2px}
   .dlg-input:focus{border-color:var(--accent)}
   .dlg .modal-actions{flex-wrap:wrap}
@@ -506,7 +507,7 @@
    교사용 설정 (여기만 고치면 됩니다)
    ════════════════════════════════════════════════════════════════ */
 const CONFIG = {
-  version: "2026-09-10b (사전 정확도 개선)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
+  version: "2026-09-10c (국립국어원 사전)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
   title: "Good for All of Us: A Place for Everyone",
   subtitle: "1학년 2학기 영어 쓰기 수행평가",
 
@@ -1575,8 +1576,10 @@ function renderDictOut() {
   // 되돌려 확인이 안 된 뜻은 그대로 믿지 말라고 알려 줍니다. 구글 번역은 단어 하나만 주면 자주 틀립니다.
   $("dictOut").innerHTML = items.map((l) => {
     const bad = l.sure === false;
+    const tag = [l.pos, l.base ? "기본형 " + l.base : ""].filter(Boolean).join(" · ");
     return '<div class="dict-item' + (bad ? " unsure" : "") + '"><span class="q">' + escapeHtml(l.q) + "</span>→<b>" + escapeHtml(l.a) + "</b>" +
-      (l.base ? '<span class="base">기본형 ' + escapeHtml(l.base) + "</span>" : "") +
+      (tag ? '<span class="base">' + escapeHtml(tag) + "</span>" : "") +
+      (l.def ? '<div class="def">' + escapeHtml(l.def) + "</div>" : "") +
       (bad ? '<div class="warn">뜻이 확실하지 않습니다. 문장에 넣어 어울리는지 꼭 확인하세요.</div>' : "") +
       "</div>";
   }).join("");
@@ -1601,7 +1604,8 @@ async function dictLookup() {
     const r = await askServer({ action: "dict", q, sid: state.sid, name: state.name, phase: state.phase }, 12000);
     if (!r || r.error) throw new Error(r && r.error || "no result");
     state.lookups.push({ t: Date.now(), p: state.phase, q: r.q || q, a: r.a || "",
-                        sure: r.sure !== false, base: r.base || "" });
+                        sure: r.sure !== false, base: r.base || "",
+                        src: r.src || "", pos: r.pos || "", def: r.def || "" });
     save(); markDirty(); refresh();
     $("dictQ").value = "";
     renderDictOut(); updateDictCount();

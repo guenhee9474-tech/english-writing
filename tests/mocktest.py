@@ -157,8 +157,9 @@ def mock(route):
         # 실제 서버처럼 확인 여부(sure)와 쓴 기본형(base)을 함께 돌려준다
         if not find(sid, key):
             out = {'error': 'NO_KEY'}
-        elif g('q') == '배고픈':          # 되돌림 확인이 안 되는 경우
-            out = {'q': g('q'), 'a': 'hungry', 'sure': True, 'base': '배고프다', 'back': '배고프다', 'dir': 'ko→en'}
+        elif g('q') == '배고픈':          # 국립국어원 사전에서 기본형으로 찾은 경우
+            out = {'q': g('q'), 'a': 'hungry', 'sure': True, 'base': '배고프다', 'back': '',
+                   'src': '사전', 'pos': '형용사', 'def': '배 속이 비어서 음식이 먹고 싶다.', 'dir': 'ko→en'}
         elif g('q') == '수상한':          # 어떻게 해도 확인이 안 되는 경우
             out = {'q': g('q'), 'a': 'award-winning', 'sure': False, 'base': '', 'back': '상을 받은', 'dir': 'ko→en'}
         else:
@@ -223,6 +224,15 @@ def check_server_file():
     check('사전 번역 결과를 보관해 호출을 줄인다', 'function trCached' in gs)
     check('확인 여부를 학생에게 돌려준다', 'sure: !!r.sure' in gs)
     check('사전 신뢰도를 직접 확인할 함수가 있다', 'function testDict' in gs)
+    # 진짜 사전(국립국어원 krdict) 을 먼저 보고, 안 되면 번역으로 넘어가야 한다
+    check('국립국어원 사전을 먼저 본다', 'function krdictLookup' in gs and 'krdictLookup(tries[i])' in gs)
+    check('사전 인증키를 코드에 적지 않는다',
+          'getProperty("krdictKey")' in gs and 'setProperty("krdictKey", k)' in gs,
+          '이 파일은 공개 저장소에 올라간다. 키는 스크립트 속성에서만 읽어야 한다')
+    check('인증키를 넣는 함수가 있다', 'function setKrdictKey' in gs)
+    check('사전이 실패해도 번역으로 넘어간다',
+          'return dictByTranslate(q);' in gs and 'logError("사전(krdict) 호출"' in gs,
+          '권한 미승인·키 없음·응답 실패 모두 지금 방식으로 되돌아가야 한다')
     check('현황 화면 자료를 잠깐 보관해 재사용한다',
           'CacheService.getScriptCache()' in gs and 'mon_all' in gs and 'MON_CACHE_SEC' in gs,
           '3초마다 물어보므로 매번 시트를 열면 느리고 사용량이 많이 든다')
@@ -400,6 +410,8 @@ with sync_playwright() as p:
     flat = lambda t: ' '.join(t.split())
     check('활용형도 제 뜻을 찾는다', 'hungry' in d, flat(d)[:70])
     check('어떤 기본형으로 찾았는지 보여 준다', '배고프다' in d, flat(d)[:70])
+    check('품사를 보여 준다', '형용사' in d, flat(d)[:90])
+    check('뜻풀이를 보여 준다', '음식이 먹고 싶다' in d, flat(d)[:110])
     A.fill('#dictQ', '수상한'); A.keyboard.press('Enter'); A.wait_for_timeout(600)
     d = A.inner_text('#dictOut')
     check('확실하지 않은 뜻은 경고한다', '확실하지 않' in d, flat(d)[:80])
