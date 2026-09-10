@@ -321,11 +321,24 @@ function krdictLookup(q) {
   }
   let out = null;
   try {
+    // num 은 10 이상이어야 합니다. 3 을 넣으면 "Invalid num value"(103) 를 돌려줍니다.
+    // User-Agent 를 안 보내면 "Request Blocked"(400) 이 옵니다. 둘 다 2026-09-10 실측.
     const url = KRDICT_URL + "?key=" + encodeURIComponent(key) + "&q=" + encodeURIComponent(q) +
-                "&part=word&sort=dict&translated=y&trans_lang=1&num=3";
-    const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: true });
+                "&part=word&sort=dict&translated=y&trans_lang=1&num=10";
+    const res = UrlFetchApp.fetch(url, {
+      muteHttpExceptions: true, followRedirects: true,
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; SchoolWritingApp/1.0)" }
+    });
     if (res.getResponseCode() === 200) {
-      const items = xmlItems(XmlService.parse(res.getContentText()).getRootElement());
+      const root = XmlService.parse(res.getContentText()).getRootElement();
+      // 사전이 오류를 알려 줄 때가 있습니다(키 오류·값 오류·하루 한도 초과). 조용히 넘어가지 않고 남깁니다.
+      const ecode = root.getChild("error_code") || (root.getName() === "error" ? root : null);
+      if (ecode) {
+        logError("사전(krdict) 거절", new Error(
+          String(xmlText(root, "error_code") || "") + " " + String(xmlText(root, "message") || "")), q);
+        return null;                                        // 보관하지 않고 다음에 다시 시도
+      }
+      const items = xmlItems(root);
       for (let i = 0; i < items.length && !out; i++) {
         const it = items[i];
         const word = xmlText(it, "word");

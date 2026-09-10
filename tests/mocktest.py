@@ -230,6 +230,14 @@ def check_server_file():
           'getProperty("krdictKey")' in gs and 'setProperty("krdictKey", k)' in gs,
           '이 파일은 공개 저장소에 올라간다. 키는 스크립트 속성에서만 읽어야 한다')
     check('인증키를 넣는 함수가 있다', 'function setKrdictKey' in gs)
+    # 실측으로 확인된 두 가지 (2026-09-10): num 은 10 이상, User-Agent 없으면 차단됨
+    numv = re.search(r'trans_lang=1&num=(\d+)', gs)
+    check('사전 요청의 num 이 10 이상이다', numv is not None and int(numv.group(1)) >= 10,
+          '3 을 넣으면 Invalid num value(103) 로 거절당한다: ' + (numv.group(1) if numv else '없음'))
+    check('사전 요청에 User-Agent 를 보낸다', '"User-Agent"' in gs,
+          '안 보내면 Request Blocked(400) 이 온다')
+    check('사전이 거절하면 오류 탭에 남긴다', '사전(krdict) 거절' in gs,
+          '키 오류·값 오류·하루 한도 초과가 조용히 넘어가면 안 된다')
     check('사전이 실패해도 번역으로 넘어간다',
           'return dictByTranslate(q);' in gs and 'logError("사전(krdict) 호출"' in gs,
           '권한 미승인·키 없음·응답 실패 모두 지금 방식으로 되돌아가야 한다')
