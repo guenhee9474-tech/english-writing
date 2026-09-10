@@ -227,9 +227,13 @@ def check_server_file():
     # 진짜 사전(국립국어원 krdict) 을 먼저 보고, 안 되면 번역으로 넘어가야 한다
     check('국립국어원 사전을 먼저 본다', 'function krdictLookup' in gs and 'krdictLookup(tries[i])' in gs)
     check('사전 인증키를 코드에 적지 않는다',
-          'getProperty("krdictKey")' in gs and 'setProperty("krdictKey", k)' in gs,
-          '이 파일은 공개 저장소에 올라간다. 키는 스크립트 속성에서만 읽어야 한다')
-    check('인증키를 넣는 함수가 있다', 'function setKrdictKey' in gs)
+          'settingsSheet().getRange("B2")' in gs and 'getProperty("krdictKey")' in gs,
+          '이 파일은 공개 저장소에 올라간다. 키는 시트나 스크립트 속성에서만 읽어야 한다')
+    check('선생님이 실행할 함수가 하나뿐이다', 'function 사전켜기' in gs,
+          '편집기에서 코드를 고치게 하지 않는다')
+    check('인증키를 스프레드시트에서 읽는다',
+          'function settingsSheet' in gs and 'settingsSheet().getRange("B2")' in gs,
+          '선생님만 보는 파일에 두어야 공개 저장소에 노출되지 않는다')
     # 실측으로 확인된 두 가지 (2026-09-10): num 은 10 이상, User-Agent 없으면 차단됨
     numv = re.search(r'trans_lang=1&num=(\d+)', gs)
     check('사전 요청의 num 이 10 이상이다', numv is not None and int(numv.group(1)) >= 10,

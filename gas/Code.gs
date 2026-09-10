@@ -267,28 +267,83 @@ function sameWord(a, b) {
 
    켜는 법 (한 번만):
      1) https://krdict.korean.go.kr/kor/openApi/openApiRegister 에서 이메일로 무료 인증키를 받습니다.
-     2) 편집기에서 setKrdictKey("받은키") 를 실행합니다.
-        이때 "외부 서비스 연결" 권한 승인 창이 뜨면 허용하세요.
-   인증키는 코드가 아니라 스크립트 속성에 저장합니다(이 파일은 공개 저장소에 올라갑니다).
+     2) 제출명단 파일의 [설정] 탭 노란 칸에 그 키를 붙여넣습니다.
+     3) 편집기 함수 목록에서 "사전켜기" 를 골라 실행합니다. 승인 창이 뜨면 허용하세요.
+   인증키는 코드가 아니라 선생님만 보는 스프레드시트에 둡니다(이 파일은 공개 저장소에 올라갑니다).
    키가 없거나 사전이 답하지 않으면 아무 일도 없다는 듯 예전 방식(구글 번역)으로 넘어갑니다.
    그래서 이 기능을 넣어도 지금 동작이 나빠질 일은 없습니다. */
 
 const KRDICT_URL = "https://krdict.korean.go.kr/api/search";
 
-function krdictKey() { try { return PropertiesService.getScriptProperties().getProperty("krdictKey") || ""; } catch (e) { return ""; } }
+/* 인증키는 제출명단 파일의 "설정" 탭에 넣습니다. 코드를 고칠 필요가 없고,
+   그 파일은 선생님만 볼 수 있으므로 공개 저장소에 키가 올라가지 않습니다. */
+function settingsSheet() {
+  const ss = SpreadsheetApp.openById(getLogSheet().getParent().getId());
+  let sh = ss.getSheetByName("설정");
+  if (!sh) {
+    sh = ss.insertSheet("설정");
+    sh.getRange("A1").setValue("설정 — 노란 칸만 고치시면 됩니다").setFontWeight("bold").setFontSize(13);
+    sh.getRange("A2").setValue("국립국어원 사전 인증키");
+    sh.getRange("B2").setBackground("#FFF4CC").setBorder(true, true, true, true, false, false);
+    sh.getRange("A3").setValue("비워 두면 구글 번역만 씁니다. 키를 넣으면 진짜 사전을 먼저 봅니다.")
+      .setFontColor("#5D6675").setFontSize(11);
+    sh.getRange("A4").setValue("키 받는 곳: https://krdict.korean.go.kr/kor/openApi/openApiRegister")
+      .setFontColor("#5D6675").setFontSize(11);
+    sh.setColumnWidth(1, 300); sh.setColumnWidth(2, 340);
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
 
-function setKrdictKey(k) {
-  k = String(k || "").trim();
-  if (!k) { Logger.log("인증키를 넣어 주세요. 예: setKrdictKey(\"발급받은키\")"); return; }
-  PropertiesService.getScriptProperties().setProperty("krdictKey", k);
-  Logger.log("인증키를 저장했습니다. 바로 시험해 봅니다…");
+function krdictKey() {
+  let cache = null;
+  try { cache = CacheService.getScriptCache(); } catch (e) {}
+  if (cache) { try { const hit = cache.get("kdkey"); if (hit !== null) return hit; } catch (e) {} }
+  let k = "";
+  try { k = String(settingsSheet().getRange("B2").getValue() || "").trim(); } catch (e) {}
+  if (!k) { try { k = PropertiesService.getScriptProperties().getProperty("krdictKey") || ""; } catch (e) {} }
+  if (cache) { try { cache.put("kdkey", k, 600); } catch (e) {} }   // 10분 보관 (매번 시트를 읽지 않게)
+  return k;
+}
+
+/* ★ 선생님이 편집기에서 실행할 함수는 이것 하나뿐입니다.
+   함수 목록에서 "사전켜기" 를 고르고 실행을 누르면 됩니다.
+   처음 실행하면 권한 승인 창이 뜹니다. 허용하세요. */
+function 사전켜기() {
+  // 일부러 외부 연결을 한 번 시도합니다. 이때 승인 창이 뜹니다.
+  try {
+    UrlFetchApp.fetch("https://krdict.korean.go.kr/", { muteHttpExceptions: true,
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; SchoolWritingApp/1.0)" } });
+  } catch (e) {
+    Logger.log("아직 외부 연결 권한이 없습니다.");
+    Logger.log("승인 창이 떴다면 [허용]을 누르고, 이 함수를 한 번 더 실행하세요.");
+    Logger.log("(자세히: " + String(e && e.message || e) + ")");
+    return;
+  }
+  const sh = settingsSheet();
+  try { PropertiesService.getScriptProperties().deleteProperty("krdictKey"); } catch (e) {}
+  try { CacheService.getScriptCache().remove("kdkey"); } catch (e) {}
+  const key = krdictKey();
+  if (!key) {
+    Logger.log("권한은 확인했습니다. 이제 인증키만 넣으면 됩니다.");
+    Logger.log("");
+    Logger.log("1) 아래 주소를 열어 제출명단 파일의 [설정] 탭으로 갑니다.");
+    Logger.log("   " + sh.getParent().getUrl());
+    Logger.log("2) 노란 칸(B2)에 인증키를 붙여넣습니다.");
+    Logger.log("3) 이 함수(사전켜기)를 한 번 더 실행합니다.");
+    Logger.log("");
+    Logger.log("키가 없으시면: https://krdict.korean.go.kr/kor/openApi/openApiRegister (이메일로 무료)");
+    return;
+  }
   const r = krdictLookup("배고프다");
   if (r) {
-    Logger.log("성공: 배고프다 → " + r.en + "  [" + r.pos + "] " + r.def);
-    Logger.log("이제 학생 사전이 국립국어원 사전을 먼저 씁니다. testDict() 로 전체를 확인해 보세요.");
+    Logger.log("사전이 켜졌습니다.");
+    Logger.log("  배고프다 → " + r.en + "   [" + r.pos + "] " + r.def);
+    Logger.log("이제 학생 사전이 국립국어원 사전을 먼저 씁니다. 더 볼 것은 없습니다.");
   } else {
-    Logger.log("사전이 답하지 않았습니다. 인증키가 맞는지, 승인 창을 허용했는지 확인하세요.");
-    Logger.log("그래도 학생 사전은 예전 방식(구글 번역)으로 정상 동작합니다.");
+    Logger.log("인증키는 넣으셨는데 사전이 답하지 않았습니다.");
+    Logger.log("제출명단 파일의 [오류] 탭에 이유가 적혀 있습니다. 그 줄을 알려 주세요.");
+    Logger.log("그동안에도 학생 사전은 구글 번역으로 정상 동작합니다.");
   }
 }
 
@@ -436,7 +491,7 @@ function testDict() {
   const words = ["배고픈", "배고프다", "경사로", "계단", "휠체어", "손잡이", "안전한", "불편한", "예쁜", "큰",
                  "손", "눈", "밝은", "어려운", "도움", "이용하다",
                  "ramp", "hungry", "stairs", "wheelchair", "safe", "convenient", "entrance", "rely"];
-  const out = ["사전 인증키: " + (krdictKey() ? "있음 (국립국어원 사전 사용)" : "없음 (구글 번역만 사용) → setKrdictKey(\"키\") 로 켜세요"),
+  const out = ["사전 인증키: " + (krdictKey() ? "있음 (국립국어원 사전 사용)" : "없음 (구글 번역만 사용) → 편집기에서 사전켜기 실행"),
                "",
                "찾은 단어 | 결과 | 출처 | 확인 | 쓴 기본형 | 품사 | 뜻풀이"];
   words.forEach((w) => {
