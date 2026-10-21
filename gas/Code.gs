@@ -139,6 +139,7 @@ function doPost(e) {
 function handlePost(e) {
   try {
     const p = (e && e.parameter) || {};
+    if (p.action === "roster") return textOut(putRoster(p.k || "", p.rows || ""));   // 교사 열쇠로 확인 (학생 token 아님)
     if (CFG.token && p.token !== CFG.token) return textOut("BAD_TOKEN");
 
     const data = {
@@ -240,7 +241,7 @@ function getAction(p) {
     else if (p.action === "takeover") out = takeover(p.sid, p.kp, p.k || "");   // 현황 화면의 "기존 기록 잇기"
     else if (CFG.token && p.token !== CFG.token) out = { error: "BAD_TOKEN" };
     else if (p.action === "load") {                 // 로그인: 열쇠 확인·발급 + 저장된 상태 + 최종 제출 여부 + 최종 단계 열림 여부
-      out = loadOrRegister(p.sid, p.name, p.key, p.nameOk === "1", String(p.rid || "").slice(0, 40));
+      out = loadOrRegister(p.sid, p.name, p.key, p.nameOk === "1", String(p.rid || "").slice(0, 40), p.rosterOk === "1");
       out.finalOpen = isFinalOpen();
       if (out.finalAt === undefined) out.finalAt = null;
     }
@@ -668,7 +669,7 @@ function findRow(sh, sid, key) {
 function newKey() { return Utilities.getUuid().replace(/-/g, "").slice(0, 20); }
 
 // 로그인: 열쇠가 맞으면 그 줄을, 없으면 (열쇠 칸이 비어 있는 같은 학번 줄이 있으면 이어받고) 아니면 새 줄을 만든다
-function loadOrRegister(sid, name, key, nameOk, rid) {
+function loadOrRegister(sid, name, key, nameOk, rid, rosterOk) {
   sid = String(sid || "").trim(); name = String(name || "").trim();
   if (!/^\d{3,}$/.test(sid) || !name) return { found: false, error: "BAD_ID" };
   // 시트 열기(드라이브 조회 몇 번)는 잠금 밖에서 합니다. 잠금 안에서 하면 수업 시작 때 30명이
@@ -692,13 +693,20 @@ function loadOrRegister(sid, name, key, nameOk, rid) {
                finalAt: String(v[COL.phase - 1]) === "done" ? (v[COL.finalAt - 1] || null) : null };
     }
   }
-  // 열쇠가 없거나 모르는 열쇠 = 새 기기. "명단" 탭이 있으면 명단의 학번·이름과 맞을 때만 받습니다.
-  // (링크가 공개되어 있으므로, 명단이 없으면 아무나 아무 학번으로 줄을 만들 수 있습니다. 학번을 잘못 친 학생이
-  //  남의 학번으로 들어가는 것도 여기서 막힙니다.)
+  // 열쇠가 없거나 모르는 열쇠 = 새 기기. "명단" 탭과 학번·이름이 다르면 막지 않고(전학생 등) 학생에게 한 번 확인받습니다.
+  // 확인받은 뒤 등록하고, 선생님 현황 화면 카드와 오류 탭에 "명단 확인"으로 남깁니다.
+  // (학번을 잘못 친 학생은 여기서 대부분 고쳐집니다. 남의 학번으로 들어와도 그 학생 줄을 덮지 않고 새 줄이 됩니다.)
+  let rosterWhy = "";
   if (roster) {
-    if (!roster.hasOwnProperty(sid)) return { found: false, error: "NOT_IN_ROSTER" };
-    if (roster[sid] && roster[sid] !== nameKey(name)) return { found: false, error: "NOT_IN_ROSTER", nameDiff: true };
+    if (!roster.hasOwnProperty(sid)) rosterWhy = "명단에 없는 학번";
+    else if (roster[sid] && nameKey(roster[sid]) !== nameKey(name)) rosterWhy = "명단의 이름과 다름";
+    if (rosterWhy && !rosterOk) return { found: false, error: "ROSTER_CHECK", why: rosterWhy };
   }
+  const noteRoster = function (k) {
+    if (!rosterWhy) return;
+    try { PropertiesService.getScriptProperties().setProperty("rmiss:" + k, rosterWhy + (roster[sid] ? " (명단: " + roster[sid] + ")" : "")); } catch (e) {}
+    logError("명단과 다른 로그인", new Error("학번 " + sid + ": " + rosterWhy + (roster[sid] ? ", 명단 이름 " + roster[sid] : "")), "입력한 이름 " + name);
+  };
   const ids0 = idRows(sh);
   const canTransfer = ids0.some((row) => String(row[COL.sid - 1]) === String(sid) && !String(row[COL.key - 1] || ""));
   // 같은 로그인 시도가 다시 왔으면(학생 화면이 응답을 못 받고 다시 보냄) 새 줄을 또 만들지 않고 아까 만든 열쇠를 돌려줍니다.
@@ -716,6 +724,7 @@ function loadOrRegister(sid, name, key, nameOk, rid) {
       sh.appendRow([sid, name, fresh0, new Date(), new Date(), "research", "", "", "", "", "", "", exists0 ? "Y" : "", "", "", ""]);
     }, true);
     if (rid) { try { cache.put("rid:" + rid, fresh0, 900); } catch (e) {} }
+    noteRoster(fresh0);
     return { found: false, key: fresh0, name: name, dup: exists0, nameMismatch: false };
   }
   return withLock(30000, "로그인 " + sid, function () {
@@ -732,6 +741,7 @@ function loadOrRegister(sid, name, key, nameOk, rid) {
       const rr = i + 2;
       const v = sh.getRange(rr, 1, 1, DRAFT_HEADER.length).getValues()[0];
       sh.getRange(rr, COL.key).setValue(fresh);
+      noteRoster(fresh);
       return { found: !!v[COL.json - 1], data: v[COL.json - 1] || null, at: v[COL.at - 1], phase: v[COL.phase - 1] || "", key: fresh,
                name: storedName || name, dup: String(v[COL.dup - 1] || "") === "Y", transferred: true,
                finalAt: String(v[COL.phase - 1]) === "done" ? (v[COL.finalAt - 1] || null) : null };
@@ -739,6 +749,7 @@ function loadOrRegister(sid, name, key, nameOk, rid) {
     // 새 등록. 같은 학번이 이미 있으면 중복 표시
     const exists = ids.some((row) => String(row[COL.sid - 1]) === String(sid));
     sh.appendRow([sid, name, fresh, new Date(), new Date(), "research", "", "", "", "", "", "", exists ? "Y" : "", "", "", ""]);
+    noteRoster(fresh);
     if (nameBlocked) logError("이름이 달라 새 줄로 등록", new Error("학번 " + sid + ": 시트에는 \"" + nameBlocked + "\", 입력은 \"" + name + "\""), "기존 줄은 그대로 두었습니다");
     return { found: false, key: fresh, name: name, dup: exists, nameMismatch: !!nameBlocked };
   }, true);
@@ -785,7 +796,26 @@ function saveDraft(d, json, phase, pdfLink, opts) {
     return "OK";
   }, true);
 }
-// "명단" 탭(A열 학번, B열 이름) → { 학번: 이름(비교용) }. 탭이 없거나 비어 있으면 null.
+// 명단 탭을 통째로 바꿉니다. rows = JSON [[학번, 이름], ...]. 교사 열쇠가 맞아야 합니다.
+// (학생 이름이 공개 저장소에 들어가지 않도록, 명단은 코드가 아니라 선생님 스프레드시트에만 둡니다.)
+function putRoster(k, rowsJson) {
+  const want = teacherKey();
+  if (!want || String(k) !== want) return "BAD_KEY";
+  let rows;
+  try { rows = JSON.parse(rowsJson); } catch (e) { return "BAD_ROWS"; }
+  if (!Array.isArray(rows) || !rows.length || rows.length > 2000) return "BAD_ROWS";
+  rows = rows.map((r) => [String(r[0] || "").trim(), safeCell(String(r[1] || "").trim())]).filter((r) => /^\d{3,}$/.test(r[0]) && r[1]);
+  const ss = logBook();
+  const name = (CFG.overview || {}).rosterName || "명단";
+  const sh = ss.getSheetByName(name) || ss.insertSheet(name);
+  sh.clearContents();
+  sh.getRange(1, 1, 1, 2).setValues([["학번", "이름"]]).setFontWeight("bold");
+  sh.getRange(2, 1, rows.length, 2).setNumberFormat("@").setValues(rows);
+  sh.setFrozenRows(1);
+  try { CacheService.getScriptCache().removeAll(["roster", "mon_all"]); } catch (e) {}
+  return "OK_ROSTER " + rows.length;
+}
+// "명단" 탭(A열 학번, B열 이름) → { 학번: 이름 }. 탭이 없거나 비어 있으면 null.
 // 로그인마다 시트를 읽지 않도록 2분 보관합니다. 명단을 고치면 2분 안에 반영됩니다.
 function rosterMap() {
   const cache = (function () { try { return CacheService.getScriptCache(); } catch (e) { return null; } })();
@@ -798,7 +828,7 @@ function rosterMap() {
         const id = String(r[0] || "").trim();
         if (!/^\d{3,}$/.test(id)) return;
         map = map || {};
-        map[id] = nameKey(r[1]);
+        map[id] = String(r[1] || "").trim();
       });
     }
   } catch (e) { logError("명단 읽기", e, ""); return null; }
@@ -1608,6 +1638,7 @@ function readMonitorRows() {
     const last = sh.getLastRow();
     const seenCls = {};
     const seenSid = {};
+    const rmiss = (function () { try { return PropertiesService.getScriptProperties().getProperties(); } catch (e) { return {}; } })();
     if (last >= 2) {
       const n = last - 1;
       const a = sh.getRange(2, 1, n, 8).getValues();          // 학번 … 자동집계
@@ -1621,7 +1652,9 @@ function readMonitorRows() {
         seenSid[sid] = true;
         const meta = String(a[i][COL.meta - 1] || "");
         const dup = String(b[i][0] || "") === "Y";
+        const rm = rmiss["rmiss:" + String(a[i][COL.key - 1] || "")];
         const st = {
+          rm: rm || "",
           c: c, sid: sid, nm: String(a[i][COL.name - 1] || ""), ph: String(a[i][COL.phase - 1] || "research"),
           lv: Number(num(meta, /화면이탈 (\d+)/) || 0), hg: Number(num(meta, /한글입력 (\d+)/) || 0),
           bs: Number(num(meta, /대량입력 (\d+)/) || 0), dc: Number(num(meta, /사전 (\d+)/) || 0),

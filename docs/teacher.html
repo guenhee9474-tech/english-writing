@@ -212,6 +212,7 @@ function render(d) {
   const drafted = list.filter((s) => s.ph === "draftDone" || s.ph === "final" || s.ph === "done").length;
   const doneN = list.filter((s) => s.ph === "done").length;
   const quietN = list.filter((s) => quiet(s)).length;
+  const rosterN = list.filter((s) => s.rm).length;
 
   const bar = $("bar");
   bar.hidden = false;
@@ -221,6 +222,7 @@ function render(d) {
     "<div>최종 제출<b>" + doneN + "</b></div>" +
     '<div class="' + (leaved.length ? "warnbox" : "") + '">이탈<b>' + leaved.length + "명</b></div>" +
     (quietN ? '<div class="warnbox">조용함<b>' + quietN + "명</b></div>" : "") +
+    (rosterN ? '<div class="warnbox">명단 확인<b>' + rosterN + "명</b></div>" : "") +
     '<div class="sp">' +
       '<button data-s="sid" class="' + (sortBy === "sid" ? "on" : "") + '">학번 순</button>' +
       '<button data-s="leave" class="' + (sortBy === "leave" ? "on" : "") + '">이탈 많은 순</button>' +
@@ -246,6 +248,7 @@ function render(d) {
     if (s.hg > 0) flags.push("한글 " + s.hg);
     if (s.bs > 0) flags.push("대량 " + s.bs);
     if (s.dup) flags.push("중복");
+    if (s.rm) flags.push("명단 확인: " + s.rm);
     let sub = "";
     if (!s.ph) sub = "아직 안 들어옴";
     else if (s.ph === "done") sub = "제출 " + clock(s.fn);

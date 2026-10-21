@@ -24,7 +24,7 @@ NOW = int(time.time() * 1000)
 STUDENTS = [
     dict(sid="10101", nm="김하늘", ph="draft",     lv=0, hg=0, bs=0, dc=1, sn=3, at=NOW - 20 * 1000,      dr=0, fn=0, dup=False),
     dict(sid="10102", nm="이서준", ph="draft",     lv=4, hg=1, bs=0, dc=0, sn=2, at=NOW - 10 * 1000,      dr=0, fn=0, dup=False),
-    dict(sid="10103", nm="박서연", ph="draftDone", lv=1, hg=0, bs=0, dc=2, sn=9, at=NOW - 60 * 1000,      dr=NOW - 55 * 1000, fn=0, dup=False),
+    dict(sid="10103", nm="가상두리", ph="draftDone", lv=1, hg=0, bs=0, dc=2, sn=9, at=NOW - 60 * 1000,      dr=NOW - 55 * 1000, fn=0, dup=False),
     dict(sid="10104", nm="최민준", ph="done",      lv=0, hg=0, bs=0, dc=3, sn=9, at=NOW - 120 * 1000,     dr=NOW - 900 * 1000, fn=NOW - 100 * 1000, dup=False),
     dict(sid="10105", nm="정하윤", ph="final",     lv=8, hg=3, bs=2, dc=0, sn=9, at=NOW - 300 * 1000,     dr=NOW - 999 * 1000, fn=0, dup=True),
     dict(sid="10106", nm="강도윤", ph="",          lv=0, hg=0, bs=0, dc=0, sn=0, at=0,                    dr=0, fn=0, dup=False),

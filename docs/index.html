@@ -507,7 +507,7 @@
    교사용 설정 (여기만 고치면 됩니다)
    ════════════════════════════════════════════════════════════════ */
 const CONFIG = {
-  version: "2026-10-21b (속도·동시 접속·보안)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
+  version: "2026-10-21c (명단 확인)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
   title: "Good for All of Us: A Place for Everyone",
   subtitle: "1학년 2학기 영어 쓰기 수행평가",
 
@@ -1422,13 +1422,14 @@ function checkSays(kind, r, since) {
   return true;
 }
 // 로그인: 서버에 저장된 상태를 가져온다. { data, phase, finalAt, error, dup, name }
-async function fetchRemote(sid, name, nameOk) {
+async function fetchRemote(sid, name, nameOk, rosterOk) {
   const q = { action: "load", sid, name, key: getKey(sid), rid: loginRid };
   if (nameOk) q.nameOk = "1";
+  if (rosterOk) q.rosterOk = "1";
   const r = await askServer(q, 45000);      // 수업 시작에 몰리면 줄을 서므로 넉넉히 (예전 15초)
   if (!r) return null;
   if (r.error === "NAME_MISMATCH") return { error: r.error, hint: r.hint || "" };
-  if (r.error === "NOT_IN_ROSTER") return { error: r.error, nameDiff: !!r.nameDiff };
+  if (r.error === "ROSTER_CHECK") return { error: r.error, why: r.why || "" };
   if (typeof r.finalOpen === "boolean") finalOpen = r.finalOpen;
   if (r.key) setKey(sid, r.key);          // 새로 발급되었거나 확인된 열쇠
   let data = null;
@@ -1954,7 +1955,7 @@ async function start() {
   let local = load(sid);
   // 이 아이패드에 같은 학번이 다른 이름으로 저장되어 있으면 바로 열지 않습니다.
   // (여러 학생이 한 아이패드를 쓰면, 앞 학생의 학번만 쳐도 그 학생 글이 열렸습니다.)
-  let nameOk = false;
+  let nameOk = false, rosterOk = false;
   if (local && local.name && nameKeyJs(local.name) !== nameKeyJs(name)) {
     $("startBtn").disabled = false; note.textContent = "";
     if (!(await askOtherName(maskName(local.name)))) { note.textContent = "학번과 이름을 다시 확인하세요."; note.className = "gate-note error"; return; }
@@ -1966,17 +1967,21 @@ async function start() {
     // 몇 초씩 흩어서 다섯 번까지 다시 시도합니다(모두 같은 순간에 다시 몰리지 않게 기다리는 시간을 무작위로).
     for (let i = 0; i < 5 && !serverOk; i++) {
       if (i) { note.textContent = "접속한 학생이 많아 잠시 기다리는 중… (" + (i + 1) + "/5)"; await sleep(1500 * i + Math.random() * 3000 * i); }
-      try { remote = await fetchRemote(sid, name, nameOk); } catch (e) { remote = null; }
+      try { remote = await fetchRemote(sid, name, nameOk, rosterOk); } catch (e) { remote = null; }
       if (remote && remote.error === "NAME_MISMATCH") {
         $("startBtn").disabled = false; note.textContent = "";
         if (nameOk || !(await askOtherName(remote.hint))) { note.textContent = "학번과 이름을 다시 확인하세요."; note.className = "gate-note error"; return; }
         nameOk = true; $("startBtn").disabled = true; i--; continue;
       }
-      if (remote && remote.error === "NOT_IN_ROSTER") {
-        $("startBtn").disabled = false;
-        note.textContent = remote.nameDiff ? "명단의 이름과 다릅니다. 이름을 명단과 똑같이 입력하세요. 맞는데도 안 되면 선생님께 알리세요."
-                                           : "명단에 없는 학번입니다. 학번을 다시 확인하세요. 맞는데도 안 되면 선생님께 알리세요.";
-        note.className = "gate-note error"; return;
+      // 학생 명단과 학번·이름이 다를 때: 막지 않고 한 번 확인받습니다(전학생 등). 그대로 시작하면 선생님 화면에 표시됩니다.
+      if (remote && remote.error === "ROSTER_CHECK") {
+        $("startBtn").disabled = false; note.textContent = "";
+        const c = await dialog({ title: "학번과 이름을 확인하세요",
+          text: (remote.why === "명단에 없는 학번" ? "이 학번은 학생 명단에 없습니다." : "학생 명단에 있는 이 학번의 이름과 입력한 이름이 다릅니다.") +
+                " 학번과 이름을 다시 확인하세요. 맞다면(전학 온 학생 등) '이대로 시작'을 누르세요. 선생님 화면에 표시됩니다.",
+          buttons: [{ label: "다시 입력", value: null, primary: true }, { label: "이대로 시작", value: "go" }] });
+        if (c.value !== "go") { note.textContent = "학번과 이름을 다시 확인하세요."; note.className = "gate-note error"; return; }
+        rosterOk = true; $("startBtn").disabled = true; i--; continue;
       }
       serverOk = !!remote && !remote.error;
     }

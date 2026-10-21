@@ -157,10 +157,8 @@ def mock(route):
             out = {'found': bool(r['data']), 'data': r['data'], 'key': key, 'name': r['name'],
                    'dup': r['dup'], 'phase': r['phase'], 'at': r['at'], 'taken': key in TAKEN}
             TAKEN.discard(key)
-        elif ROSTER and sid not in ROSTER:
-            out = {'found': False, 'error': 'NOT_IN_ROSTER'}
-        elif ROSTER and norm(ROSTER[sid]) != norm(name):
-            out = {'found': False, 'error': 'NOT_IN_ROSTER', 'nameDiff': True}
+        elif ROSTER and g('rosterOk') != '1' and (sid not in ROSTER or norm(ROSTER[sid]) != norm(name)):
+            out = {'found': False, 'error': 'ROSTER_CHECK', 'why': '명단에 없는 학번' if sid not in ROSTER else '명단의 이름과 다름'}
         else:
             # 열쇠 칸이 빈 같은 학번 줄을 이어받는다. 단, 이름이 다르면 넘겨주지 않는다.
             take = None
@@ -180,6 +178,8 @@ def mock(route):
             else:
                 dup = any(x['sid'] == sid for x in rows)
                 r2 = add_row(sid, name, k, dup)
+                if ROSTER and (sid not in ROSTER or norm(ROSTER[sid]) != norm(name)):
+                    r2['rm'] = '명단에 없는 학번' if sid not in ROSTER else '명단의 이름과 다름'
                 out = {'found': False, 'key': k, 'name': name, 'dup': dup, 'phase': 'research',
                        'nameMismatch': blocked}
         out['finalOpen'] = True
@@ -227,7 +227,7 @@ def monitor(k):
         if r['dup'] == '이어받음':
             continue
         x = {'c': r['sid'][0] + '학년 ' + str(int(r['sid'][1:3])) + '반', 'sid': r['sid'], 'nm': r['name'], 'ph': r['phase'],
-             'lv': 0, 'hg': 0, 'bs': 0, 'dc': 0, 'sn': 0, 'at': 0, 'dr': 0, 'fn': 0, 'dup': r['dup'] is True}
+             'lv': 0, 'hg': 0, 'bs': 0, 'dc': 0, 'sn': 0, 'at': 0, 'dr': 0, 'fn': 0, 'dup': r['dup'] is True, 'rm': r.get('rm', '')}
         if r['dup'] is True:
             o = next((y for j, y in enumerate(rows) if j != i and y['sid'] == r['sid'] and y['dup'] != '이어받음'
                       and norm(y['name']) == norm(r['name'])), None)
@@ -413,7 +413,9 @@ def check_server_file():
     check('총괄 갱신 차례를 잠금 안에서 정한다', 'if (!lock.tryLock(2000)) return;' in gs)
     check('초안 탭 제목만 바뀐 경우 탭을 갈아치우지 않는다', '초안 탭 제목 줄이 바뀌어 되돌림' in gs)
     check('만들다 만 구글 문서를 휴지통으로 보낸다', 'function buildPdf' in gs)
-    check('명단 탭이 있으면 명단 밖 학번을 받지 않는다', 'error: "NOT_IN_ROSTER"' in lor and 'function rosterMap' in gs)
+    check('명단과 다르면 막지 않고 확인받은 뒤 표시한다',
+          'error: "ROSTER_CHECK"' in lor and 'rosterOk' in lor and 'noteRoster(' in lor and 'NOT_IN_ROSTER' not in gs)
+    check('명단은 교사 열쇠로만 올릴 수 있다', 'function putRoster' in gs and 'teacherKey()' in gs[gs.index('function putRoster'):gs.index('function rosterMap')])
     check('로그인은 대부분 잠금 없이 처리한다 (90명 동시 로그인 대비)',
           lor.index('const r = findRow(sh, sid, key);') < lor.index('withLock(') and 'if (!canTransfer)' in lor)
     sd = gs[gs.index('function saveDraft'):gs.index('function rowState')]
@@ -653,7 +655,7 @@ with sync_playwright() as p:
     keep = target['data']
     target['key'] = ''                       # 선생님이 [기기열쇠] 칸을 지운 상황
     n_before = len(rows)
-    ctxD, D = new_page(b); login(D, '10315', '박서연', offline_ok=True)
+    ctxD, D = new_page(b); login(D, '10315', '가상하나', offline_ok=True)
     check('새 줄이 만들어진다', len(rows) == n_before + 1, len(rows))
     check('원래 학생 글이 그대로 남는다', target['data'] == keep)
     check('남의 이름으로 열리지 않는다', '김하늘' not in D.eval_on_selector('#who', 'e=>e.textContent'),
@@ -801,19 +803,27 @@ with sync_playwright() as p:
     check('최종 타이머가 새로 20분이다', near20(L.inner_text('#timer')), L.inner_text('#timer'))
     ctxL.close()
 
-    # ── T18. "명단" 탭이 있으면 명단의 학번·이름만 새로 등록된다 ──
-    print('T18 명단에 있는 학생만 등록')
+    # ── T18. 명단과 다르면 막지 않고 확인받은 뒤 들어가고, 선생님 쪽에 표시된다 ──
+    print('T18 명단 확인 (막지 않음, 확인 + 표시)')
     ROSTER.update({'10301': '최유진'})
     ctxM, M = new_page(b)
-    login(M, '10399', '아무개')
-    check('명단에 없는 학번은 막는다', '명단에 없는 학번' in M.inner_text('#gateNote') and M.eval_on_selector('#app', 'e=>e.hidden'),
-          M.inner_text('#gateNote'))
-    check('막힌 학번은 줄이 생기지 않는다', not any(r['sid'] == '10399' for r in rows))
-    login(M, '10301', '최유친')
-    check('이름이 명단과 다르면 막는다', '명단의 이름과 다릅니다' in M.inner_text('#gateNote'), M.inner_text('#gateNote'))
-    login(M, '10301', '최 유진')
-    check('명단과 같으면(띄어쓰기 무시) 들어간다', not M.eval_on_selector('#app', 'e=>e.hidden'))
+    login(M, '10399', '전학생')
+    check('명단에 없는 학번이면 확인 창이 뜬다', '확인하세요' in M.inner_text('#dlgTitle') and '명단에 없습니다' in M.inner_text('#dlgText'), M.inner_text('#dlgTitle'))
+    M.click('#dlgActions button:has-text("다시 입력")'); M.wait_for_timeout(300)
+    check('"다시 입력"이면 들어가지 않고 줄도 안 생긴다', M.eval_on_selector('#app', 'e=>e.hidden') and not any(r['sid'] == '10399' for r in rows))
+    M.click('#startBtn'); M.wait_for_timeout(1200)
+    M.click('#dlgActions button:has-text("이대로 시작")'); M.wait_for_timeout(1500)
+    check('"이대로 시작"이면 들어간다 (전학생 등)', not M.eval_on_selector('#app', 'e=>e.hidden'))
+    r18 = next((r for r in rows if r['sid'] == '10399'), None)
+    check('그 줄에 명단 확인 표시가 남는다', bool(r18 and r18.get('rm')))
     ctxM.close()
+    ctxM2, M2 = new_page(b)
+    login(M2, '10301', '최유친')
+    check('이름이 명단과 다르면 확인 창이 뜬다', '이름과 입력한 이름이 다릅니다' in M2.inner_text('#dlgText'), M2.inner_text('#dlgText')[:40])
+    M2.click('#dlgActions button:has-text("다시 입력")'); M2.wait_for_timeout(300)
+    login(M2, '10301', '최 유진')
+    check('명단과 같으면(띄어쓰기 무시) 확인 없이 들어간다', not M2.eval_on_selector('#app', 'e=>e.hidden'))
+    ctxM2.close()
     ROSTER.clear()
 
     # ── T19. 구글이 "동시 실행이 너무 많음"으로 돌려보내도 로그인·제출이 저절로 다시 되어 성공한다 ──
