@@ -80,6 +80,10 @@
   .card.done .st{color:var(--green)}
   .card.leave{border-color:var(--red); border-left-color:var(--red); background:var(--red-soft)}
   .card.quiet{outline:2px dashed #E2564A; outline-offset:-3px}
+  .card .take{margin-top:6px; border:1px solid var(--red); background:#fff; color:var(--red); border-radius:8px;
+    padding:6px 8px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit}
+  .card .take:disabled{opacity:.5; cursor:default}
+  .closed{background:var(--red); color:#fff; padding:10px 16px; font-size:15px; font-weight:700}
 
   .msg{background:#fff; border:1px solid var(--line); border-radius:12px; padding:22px; margin:16px;
        font-size:16px; line-height:1.7}
@@ -102,6 +106,7 @@
   <div class="tabs" id="tabs"></div>
 </header>
 
+<div class="closed" id="closed" hidden>최종 글쓰기(2회차)가 닫혀 있습니다. 학생이 로그인해도 최종 단계가 열리지 않습니다. 열려면 Apps Script 편집기에서 openFinal 을 실행하세요.</div>
 <div class="bar" id="bar" hidden></div>
 <main><div id="body"></div></main>
 
@@ -186,6 +191,7 @@ function quiet(st) {
 }
 
 function render(d) {
+  $("closed").hidden = d.fo !== false;
   // 반 목록
   const tabs = $("tabs");
   const names = d.classes || [];
@@ -248,9 +254,28 @@ function render(d) {
       '<div class="st">' + esc(LABEL[s.ph] || "미접속") + "</div>" +
       (flags.length ? '<div class="flags">' + esc(flags.join(" · ")) + "</div>" : "") +
       '<div class="sub">' + esc(sub) + "</div>" +
+      (s.kp ? '<button class="take" data-sid="' + esc(s.sid) + '" data-kp="' + esc(s.kp) + '" data-nm="' + esc(s.nm) + '" data-op="' + esc(LABEL[s.op] || s.op || "") + '">기존 기록 잇기 (' + esc(LABEL[s.op] || s.op || "") + ")</button>" : "") +
       "</div>";
   }).join("") + "</div>";
 }
+
+/* "중복" 카드의 기존 기록 잇기.
+   학생 기기의 열쇠가 사라져(다른 아이패드, Safari 기록 삭제, 7일 넘게 안 들어옴 등) 새 줄로 시작한 학생을
+   원래 줄(먼저 쓴 글)에 다시 연결합니다. 누른 뒤 그 학생에게 "새로고침하고 같은 학번·이름으로 다시 로그인"하라고 합니다. */
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest(".take");
+  if (!b || b.disabled) return;
+  const msg = b.dataset.sid + " " + b.dataset.nm + " 학생을 먼저 쓰던 기록(" + b.dataset.op + ")에 다시 연결합니다.\n" +
+    "지금 이 기기에서 새로 쓴 내용은 버려집니다.\n\n연결한 뒤 학생에게 '새로고침 → 같은 학번·이름으로 로그인'하라고 알려 주세요.";
+  if (!confirm(msg)) return;
+  b.disabled = true; b.textContent = "연결하는 중…";
+  try {
+    const r = await ask({ action: "takeover", k: KEY, sid: b.dataset.sid, kp: b.dataset.kp }, 30000);
+    if (r && r.ok) { alert("연결했습니다. 학생에게 새로고침 후 같은 학번·이름으로 다시 로그인하라고 알려 주세요."); load(true); }
+    else alert("연결하지 못했습니다: " + ((r && r.error) || "응답 없음") + "\n(NO_ORIGINAL: 같은 이름의 원래 기록이 없음)");
+  } catch (err) { alert("연결하지 못했습니다. 잠시 뒤 다시 눌러 보세요."); }
+  finally { b.disabled = false; }
+});
 
 let lastData = null;
 
