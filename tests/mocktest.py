@@ -28,7 +28,12 @@ from playwright.sync_api import sync_playwright
 html = open(os.path.join(DOCS, 'index.html'), encoding='utf-8').read()
 SCRIPT = re.search(r'scriptUrl:\s*"([^"]+)"', html).group(1)
 TOKEN = re.search(r'token:\s*"([^"]+)"', html).group(1)
-PIN = re.search(r'teacherPin:\s*"([^"]*)"', html).group(1)
+import hashlib
+PIN = '424242'                       # 시험용 PIN (실제 PIN 은 소스에 없고 지문만 있음)
+PIN_HASH = hashlib.pbkdf2_hmac('sha256', PIN.encode(), b'czpin-2026', 150000).hex()
+REAL_HASH = re.search(r'teacherPinHash:\s*"([0-9a-f]{64})"', html).group(1)
+TEST_HTML = html.replace(REAL_HASH, PIN_HASH)
+assert PIN_HASH in TEST_HTML
 assert SCRIPT, 'docs/index.html 의 CONFIG.submit.scriptUrl 이 비어 있습니다'
 ORDER = {'research': 0, 'draft': 1, 'draftDone': 2, 'final': 3, 'done': 4}
 
@@ -36,9 +41,12 @@ ORDER = {'research': 0, 'draft': 1, 'draftDone': 2, 'final': 3, 'done': 4}
 rows = []        # 초안 시트 한 줄씩: sid,name,key,data,phase,at,draftAt,dup,brain,draft
 finals = []      # 제출명단 한 줄씩: {sid,keyPrefix,at}
 posts = []       # 받은 POST 기록
+pdfs = []        # PDF 요청 (학번, 종류)
 DROP = {'draft': False, 'save': False, 'net': False}   # 테스트에서 특정 제출을 잃어버리게 만드는 스위치 (net: 와이파이 끊김)
 TAKEN = set()    # "기존 기록 잇기" 뒤 아직 다시 로그인하지 않은 열쇠
 TKEY = 'teacher-key-for-test'
+ROSTER = {}      # "명단" 탭 흉내. 비어 있으면 누구나 등록
+BUSY = {'n': 0}  # 남은 "동시 실행 너무 많음" 응답 수
 
 CORS = {'Access-Control-Allow-Origin': '*'}
 # 읽기를 어떤 방식으로 했는지 센다. 새 방식(쿠키 없는 fetch)이 실제로 쓰여야 한다.
@@ -80,6 +88,10 @@ def mock(route):
     req = route.request
     if DROP['net']:                          # 와이파이가 끊긴 상황: 어떤 요청도 닿지 않는다
         route.abort(); return
+    if BUSY['n'] > 0:                        # 구글 "동시 실행이 너무 많음" 화면 (스크립트가 돌기 전에 돌려보냄)
+        BUSY['n'] -= 1
+        route.fulfill(status=200, content_type='text/html', headers=CORS,
+                      body='<!DOCTYPE html><html><body>이 Google 사용자 계정에 대해 너무 많은 스크립트가 동시에 실행되고 있습니다.</body></html>'); return
     u = urllib.parse.urlparse(req.url)
     q = urllib.parse.parse_qs(u.query)
 
@@ -102,6 +114,13 @@ def mock(route):
                 route.fulfill(status=200, headers=CORS, body='TAKEN'); return
             res = write_row(r, b, g, json.loads(g('data') or '{}').get('phase', ''), False)
             route.fulfill(status=200, headers=CORS, body='STALE' if res == 'STALE' else 'OK_SAVE'); return
+        if ph == 'pdf':
+            kind = g('kind')
+            if kind == 'final' and r['phase'] != 'done':
+                route.fulfill(status=200, headers=CORS, body='BAD_PHASE'); return
+            r['finalPdf' if kind == 'final' else 'pdf'] = 'https://example.test/' + kind + '.pdf'
+            pdfs.append((g('sid'), kind))
+            route.fulfill(status=200, headers=CORS, body='OK_PDF\n' + json.dumps(check_out(r))); return
         if ph == 'reopen':
             to = g('to')
             if to not in ORDER:
@@ -112,12 +131,12 @@ def mock(route):
             if ORDER.get(r['phase'], 0) >= ORDER['final']:   # 이미 2회차면 늦게 온 초안 제출은 무시
                 route.fulfill(status=200, headers=CORS, body='OK_DRAFT'); return
             write_row(r, b, g, 'draftDone', True)
-            route.fulfill(status=200, headers=CORS, body='OK_DRAFT'); return
+            route.fulfill(status=200, headers=CORS, body='OK_DRAFT\n' + json.dumps(check_out(r))); return
         if ph != 'final':
             route.fulfill(status=200, headers=CORS, body='BAD_PHASE'); return
         write_row(r, b, g, 'done', True)
         finals.append({'sid': g('sid'), 'kp': g('key')[:6], 'at': now_iso()})
-        route.fulfill(status=200, headers=CORS, body='OK'); return
+        route.fulfill(status=200, headers=CORS, body='OK\n' + json.dumps(check_out(r))); return
 
     # ── 읽기 (JSONP) ──
     cb = q.get('callback', ['cb'])[0]
@@ -138,6 +157,10 @@ def mock(route):
             out = {'found': bool(r['data']), 'data': r['data'], 'key': key, 'name': r['name'],
                    'dup': r['dup'], 'phase': r['phase'], 'at': r['at'], 'taken': key in TAKEN}
             TAKEN.discard(key)
+        elif ROSTER and sid not in ROSTER:
+            out = {'found': False, 'error': 'NOT_IN_ROSTER'}
+        elif ROSTER and norm(ROSTER[sid]) != norm(name):
+            out = {'found': False, 'error': 'NOT_IN_ROSTER', 'nameDiff': True}
         else:
             # 열쇠 칸이 빈 같은 학번 줄을 이어받는다. 단, 이름이 다르면 넘겨주지 않는다.
             take = None
@@ -190,6 +213,10 @@ def mock(route):
                       headers={'Access-Control-Allow-Origin': '*'}, body=json.dumps(out))
         return
     route.fulfill(status=200, content_type='application/javascript', body=cb + '(' + json.dumps(out) + ')')
+
+def check_out(r):
+    return {'draftAt': r['draftAt'], 'finalAt': r['finalAt'] if r['phase'] == 'done' else None, 'savedAt': r['at'],
+            'phase': r['phase'], 'draftPdf': r.get('pdf', ''), 'finalPdf': r.get('finalPdf', '')}
 
 def monitor(k):
     """gas/Code.gs 의 readMonitorRows 와 같은 규칙 (중복 줄에 같은 이름의 원래 줄이 있으면 kp/op)."""
@@ -255,12 +282,11 @@ def check_server_file():
     check('제출을 받는 동안 총괄 시트를 직접 쓰지 않는다',
           'rebuildOverview' not in dopost,
           '제출이 몰릴 때 가장 무거운 작업이 겹쳐 실행 시간 제한을 넘긴다')
-    check('총괄 갱신이 자동으로 돈다',
-          dopost.count('maybeRebuildOverview(') == 3 and 'function maybeRebuildOverview' in gs,
-          '자동 저장·초안 제출·최종 제출 세 곳에서 불러야 한다: ' + str(dopost.count('maybeRebuildOverview(')))
-    check('제출은 짧은 간격, 자동 저장은 긴 간격으로 갱신한다',
-          dopost.count('maybeRebuildOverview(OV_SUBMIT_SEC)') == 2 and dopost.count('maybeRebuildOverview(OV_SAVE_SEC)') == 1,
-          '제출 때마다 통째로 다시 쓰면 선생님이 열어 둔 스프레드시트가 계속 다시 써져 안 열린다')
+    mon = gs[gs.index('function monitorData'):gs.index('function monitorAll')]
+    check('총괄 갱신이 자동으로 돈다 (자동 저장 + 선생님 현황 화면)',
+          dopost.count('maybeRebuildOverview(OV_SAVE_SEC)') == 1 and 'maybeRebuildOverview(OV_MONITOR_SEC)' in mon,
+          '제출 요청에서 갱신하면 그 학생이 십수 초를 기다린다(2026-10-21 부하 시험)')
+    check('제출 요청은 총괄 갱신을 기다리지 않는다', dopost.count('maybeRebuildOverview(') == 1)
     check('갱신 간격이 넉넉하다',
           re.search(r'OV_SAVE_SEC = (\d+)', gs) and int(re.search(r'OV_SAVE_SEC = (\d+)', gs).group(1)) >= 120,
           '실시간은 teacher.html 이 맡고, 시트는 기록이라 자주 쓸 필요가 없다')
@@ -339,8 +365,10 @@ def check_server_file():
     check('없는 함수를 부르지 않는다 (exportDocx)', 'exportDocx' not in gs)
     check('모르는 단계를 최종 제출로 처리하지 않는다',
           'if (p.phase !== "final") return textOut("BAD_PHASE");' in gs)
-    check('최종 PDF 실패가 제출 전체를 버리지 않는다',
-          re.search(r'try \{ files = savePdf\(data, "final"\); \}', gs) is not None)
+    check('제출 요청은 PDF 를 만들지 않는다 (PDF 는 따로, 실패해도 제출은 성공)',
+          'savePdf(' not in dopost and 'function makePdfNow' in gs and 'if (p.phase === "pdf")' in dopost,
+          '2026-10-21 부하 시험: 90명 동시 제출에서 PDF 때문에 37명이 첫 시도에 실패')
+    check('빠진 PDF 를 채우는 길이 있다', 'function fillMissingPdfs' in gs and 'function PDF빠진것만들기' in gs)
     check('이름이 다르면 남의 줄을 넘겨주지 않는다',
           'nameKey(storedName) !== nameKey(name)' in gs)
     check('열쇠 없는 확인 요청에는 답하지 않는다',
@@ -361,13 +389,13 @@ def check_server_file():
           re.search(r'PHASE_ORDER = \{([^}]+)\}', gs).group(1).replace(' ', '') ==
           re.search(r'ORDER = \{([^}]+)\}', html).group(1).replace(' ', ''))
     # 2026-10-21 점검에서 고친 것들 (되돌아가지 않게)
-    check('최종 제출은 글 저장을 PDF 보다 먼저 한다',
+    check('최종 제출은 글을 저장한 뒤에 성공이라고 답한다',
           'saveDraft(data, p.data || "", "done"' in dopost and
-          dopost.index('saveDraft(data, p.data || "", "done"') < dopost.index('savePdf(data, "final")'),
+          dopost.index('saveDraft(data, p.data || "", "done"') < dopost.rindex('return okWith("OK");'),
           '저장 실패를 삼키고 PDF 까지 실패하면 글이 어디에도 없는데 학생은 OK 를 받았다')
     check('최종 상태 저장 실패를 삼키지 않는다', 'logError("최종 상태 저장"' not in dopost)
-    check('초안 제출도 글 저장을 PDF 보다 먼저 한다',
-          dopost.index('saveDraft(data, p.data || "", "draftDone"') < dopost.index('savePdf(data, "draft")'))
+    check('초안 제출도 글을 저장한 뒤에 성공이라고 답한다',
+          dopost.index('saveDraft(data, p.data || "", "draftDone"') < dopost.rindex('return okWith("OK_DRAFT");'))
     check('같은 제출이 다시 오면 PDF 를 또 만들지 않는다', dopost.count('recentAt(st.') >= 2)
     check('늦은 자동 저장이 제출된 글을 덮지 않는다', 'return "STALE";' in gs)
     check('이미 2회차면 늦게 온 초안 제출을 무시한다',
@@ -385,6 +413,15 @@ def check_server_file():
     check('총괄 갱신 차례를 잠금 안에서 정한다', 'if (!lock.tryLock(2000)) return;' in gs)
     check('초안 탭 제목만 바뀐 경우 탭을 갈아치우지 않는다', '초안 탭 제목 줄이 바뀌어 되돌림' in gs)
     check('만들다 만 구글 문서를 휴지통으로 보낸다', 'function buildPdf' in gs)
+    check('명단 탭이 있으면 명단 밖 학번을 받지 않는다', 'error: "NOT_IN_ROSTER"' in lor and 'function rosterMap' in gs)
+    check('로그인은 대부분 잠금 없이 처리한다 (90명 동시 로그인 대비)',
+          lor.index('const r = findRow(sh, sid, key);') < lor.index('withLock(') and 'if (!canTransfer)' in lor)
+    sd = gs[gs.index('function saveDraft'):gs.index('function rowState')]
+    check('저장은 줄 찾기를 잠금 밖에서 하고, 잠금 안에서 열쇠를 다시 확인한다',
+          sd.index('findRow(sh, d.sid, d.key)') < sd.index('withLock(') and 'String(old[COL.key - 1]) !== String(d.key)' in sd)
+    check('제출 답에 확인 정보를 함께 보낸다', 'JSON.stringify(checkStatus(data.sid, data.key))' in dopost and dopost.count('okWith(') >= 4)
+    check('제출명단 파일을 매번 드라이브에 묻지 않는다', 'props.getProperty("logSheetOk") === saved' in gs)
+    check('교사 PIN 이 소스에 그대로 있지 않다', not re.search(r'teacherPin:\s*"\d', html) and 'teacherPinHash' in html)
     dep = open(os.path.join(BASE, '..', 'gas', '.deployment-id'), encoding='utf-8').read().strip()
     check('배포 ID 가 페이지 주소에 든 것과 같다', dep in SCRIPT, dep)
 
@@ -441,6 +478,7 @@ def new_page(b):
     pg.on('pageerror', lambda e: errs.append(str(e)))
     pg.errs = errs
     pg.route(SCRIPT + '*', mock)
+    pg.route('http://127.0.0.1:8880/index.html*', lambda route: route.fulfill(status=200, content_type='text/html; charset=utf-8', body=TEST_HTML))
     return ctx, pg
 
 def login(pg, sid, name, offline_ok=False):
@@ -578,6 +616,9 @@ with sync_playwright() as p:
     check('제출명단에 한 줄 들어간다', len(finals) == 1, len(finals))
     check('학생에게 전송했다고 알린다', '전송했습니다' in st, st[:60])
     check('서버 단계가 최종 제출이 된다', rows[0]['phase'] == 'done', rows[0]['phase'])
+    A.wait_for_timeout(800)
+    check('제출 뒤 PDF 를 따로 요청한다', ('10315', 'final') in pdfs and rows[0].get('finalPdf'), pdfs[-3:])
+    check('학생 화면에 PDF 소식이 붙는다', 'PDF도 만들었습니다' in A.inner_text('#doneStatus'), A.inner_text('#doneStatus')[:80])
 
     # ── T8. 교사 "제출 취소" 뒤 다시 쓴 글이 서버에 저장된다 ──
     print('T8 제출 취소 뒤 자동 저장')
@@ -759,6 +800,39 @@ with sync_playwright() as p:
           L.inner_text('#phaseLabel'))
     check('최종 타이머가 새로 20분이다', near20(L.inner_text('#timer')), L.inner_text('#timer'))
     ctxL.close()
+
+    # ── T18. "명단" 탭이 있으면 명단의 학번·이름만 새로 등록된다 ──
+    print('T18 명단에 있는 학생만 등록')
+    ROSTER.update({'10301': '최유진'})
+    ctxM, M = new_page(b)
+    login(M, '10399', '아무개')
+    check('명단에 없는 학번은 막는다', '명단에 없는 학번' in M.inner_text('#gateNote') and M.eval_on_selector('#app', 'e=>e.hidden'),
+          M.inner_text('#gateNote'))
+    check('막힌 학번은 줄이 생기지 않는다', not any(r['sid'] == '10399' for r in rows))
+    login(M, '10301', '최유친')
+    check('이름이 명단과 다르면 막는다', '명단의 이름과 다릅니다' in M.inner_text('#gateNote'), M.inner_text('#gateNote'))
+    login(M, '10301', '최 유진')
+    check('명단과 같으면(띄어쓰기 무시) 들어간다', not M.eval_on_selector('#app', 'e=>e.hidden'))
+    ctxM.close()
+    ROSTER.clear()
+
+    # ── T19. 구글이 "동시 실행이 너무 많음"으로 돌려보내도 로그인·제출이 저절로 다시 되어 성공한다 ──
+    print('T19 동시 실행 한도에 걸려도 저절로 다시 시도')
+    ctxN, N = new_page(b)
+    BUSY['n'] = 2
+    N.goto('http://127.0.0.1:8880/index.html?as=1')
+    N.fill('#sid', '10205'); N.fill('#name', '서하린'); N.click('#startBtn')
+    try: N.wait_for_selector('#app:not([hidden])', timeout=30000)
+    except Exception: pass
+    check('로그인이 결국 된다', not N.eval_on_selector('#app', 'e=>e.hidden'), N.inner_text('#gateNote'))
+    check('줄이 하나만 생긴다', sum(1 for r in rows if r['sid'] == '10205') == 1)
+    start_draft(N); type_line(N, 0, 0, 'Busy server test line.'); N.wait_for_timeout(500)
+    BUSY['n'] = 1
+    N.click('#submitBtn'); N.wait_for_selector('#modal:not([hidden])')
+    N.click('#modalOk'); N.wait_for_selector('#done:not([hidden])'); N.wait_for_timeout(16000)
+    rowN = next(r for r in rows if r['sid'] == '10205')
+    check('초안 제출이 결국 된다', rowN['draftAt'] is not None and '저장되었습니다' in N.inner_text('#doneStatus'), N.inner_text('#doneStatus')[:60])
+    ctxN.close()
 
     # ── 마무리 ──
     print('마무리')

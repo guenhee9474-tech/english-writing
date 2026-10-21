@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>수행평가 현황 (교사용)</title>
+<meta name="referrer" content="no-referrer">
 <!--
   선생님 현황 화면. 수업 중에 반 하나를 띄워 두고 보는 용도입니다.
 
@@ -116,7 +117,10 @@ const REFRESH_SEC = 3;          // 몇 초마다 다시 읽을지 (서버가 3�
 const QUIET_MIN = 3;            // 이만큼 저장이 없으면 "조용함"으로 본다
 
 const q = new URLSearchParams(location.search);
-const KEY = q.get("k") || "";
+// 열쇠는 주소의 # 뒤(teacher.html#k=…)에 둡니다. # 뒤는 서버로 보내지지 않아 GitHub 기록 등에 남지 않습니다.
+// 예전 주소(?k=…)로 열어도 되고, 열자마자 # 형태로 바꿔 둡니다(북마크를 다시 해 두면 좋습니다).
+const KEY = q.get("k") || new URLSearchParams(location.hash.slice(1)).get("k") || "";
+if (q.get("k")) { try { history.replaceState(null, "", location.pathname + "#k=" + encodeURIComponent(KEY)); } catch (e) {} }
 const $ = (id) => document.getElementById(id);
 
 let cls = q.get("cls") || localStorage.getItem("t_cls") || "";
@@ -265,7 +269,8 @@ function render(d) {
 document.addEventListener("click", async (e) => {
   const b = e.target.closest(".take");
   if (!b || b.disabled) return;
-  const msg = b.dataset.sid + " " + b.dataset.nm + " 학생을 먼저 쓰던 기록(" + b.dataset.op + ")에 다시 연결합니다.\n" +
+  const msg = "학생이 직접 손을 들어 요청한 경우에만 누르세요. (다른 사람이 이 학생 이름으로 들어와 있을 수도 있습니다)\n\n" +
+    b.dataset.sid + " " + b.dataset.nm + " 학생을 먼저 쓰던 기록(" + b.dataset.op + ")에 다시 연결합니다.\n" +
     "지금 이 기기에서 새로 쓴 내용은 버려집니다.\n\n연결한 뒤 학생에게 '새로고침 → 같은 학번·이름으로 로그인'하라고 알려 주세요.";
   if (!confirm(msg)) return;
   b.disabled = true; b.textContent = "연결하는 중…";
