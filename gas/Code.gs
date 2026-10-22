@@ -240,6 +240,7 @@ function getAction(p) {
     if (p.action === "monitor") out = monitorData(p.cls || "", p.k || "");
     else if (p.action === "takeover") out = takeover(p.sid, p.kp, p.k || "");   // 현황 화면의 "기존 기록 잇기"
     else if (p.action === "ovtick") out = overviewTick(p.k || "");               // 현황 화면이 1분마다 따로 부름
+    else if (p.action === "tcmd") out = teacherCommand(p);                         // 현황 화면에서 학생에게 보내는 조작
     else if (CFG.token && p.token !== CFG.token) out = { error: "BAD_TOKEN" };
     else if (p.action === "load") {                 // 로그인: 열쇠 확인·발급 + 저장된 상태 + 최종 제출 여부 + 최종 단계 열림 여부
       out = loadOrRegister(p.sid, p.name, p.key, p.nameOk === "1", String(p.rid || "").slice(0, 40), p.rosterOk === "1");
@@ -248,6 +249,7 @@ function getAction(p) {
     }
     else if (p.action === "dict") out = dictLookup(p);
     else if (p.action === "check") out = checkStatus(p.sid, p.key);
+    else if (p.action === "cmd") out = studentCommands(p.sid);                     // 학생 화면이 20초마다 가져감 (시트를 열지 않음)
     else if (p.action === "session") out = { session: 1, finalOpen: isFinalOpen() };
     else out = { ok: true };
   }
@@ -1625,6 +1627,49 @@ function overviewTick(key) {
     if (Date.now() - at > 60000) { props.setProperty("pdfSweepAt", String(Date.now())); fillMissingPdfs(2, 180); }
   } catch (e) { logError("빠진 PDF 채우기", e, ""); }
   return { ok: true };
+}
+/* ── 현황 화면에서 학생 조작 ──
+   선생님이 현황 화면에서 카드를 오른쪽 클릭해 고른 조작을 학번별로 잠깐(6시간) 맡겨 두면,
+   학생 화면이 20초마다 가져가 적용합니다. 가져가기는 캐시만 읽어 가볍습니다(시트·잠금 없음).
+   조작 종류: add5(5분 더), unlock(잠금 풀고 5분), todraft(초안 단계로), submit(지금 제출), reopen(제출 취소), msg(메시지).
+   학생 화면은 적용한 조작 번호를 기억해 같은 조작을 두 번 하지 않고, 자동집계 '교사조작'에 남깁니다. */
+const TCMDS = { add5: 1, unlock: 1, todraft: 1, submit: 1, reopen: 1, msg: 1 };
+function teacherCommand(p) {
+  const want = teacherKey();
+  if (!want || String(p.k || "") !== want) return { error: "BAD_KEY" };
+  const cmd = String(p.cmd || "");
+  if (!TCMDS[cmd]) return { error: "BAD_CMD" };
+  const arg = cmd === "msg" ? String(p.arg || "").trim().slice(0, 300) : "";
+  if (cmd === "msg" && !arg) return { error: "NO_TEXT" };
+  let sids = [];
+  if (p.cls) {   // 반 전체: 지금 들어와 있는 학생만 (조작에 맞는 단계인지는 학생 화면이 다시 확인)
+    const all = monitorAll();
+    if (all.error) return all;
+    sids = all.students.filter((s) => s.c === String(p.cls) && s.ph && s.ph !== "done").map((s) => s.sid);
+  } else if (/^\d{3,}$/.test(String(p.sid || ""))) {
+    sids = [String(p.sid)];
+  }
+  if (!sids.length) return { error: "NO_TARGET" };
+  const cache = CacheService.getScriptCache();
+  const item = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), cmd: cmd, arg: arg, t: Date.now() };
+  const uniq = sids.filter((x, i) => sids.indexOf(x) === i);
+  const got = cache.getAll(uniq.map((x) => "cmd:" + x));
+  const put = {};
+  uniq.forEach((x) => {
+    let list = [];
+    try { list = JSON.parse(got["cmd:" + x] || "[]"); } catch (e) {}
+    list.push(item);
+    put["cmd:" + x] = JSON.stringify(list.slice(-20));
+  });
+  cache.putAll(put, 21600);
+  logError("현황판 조작 기록", new Error(cmd + (p.cls ? " · " + p.cls + " " + uniq.length + "명" : " · " + uniq[0])), arg ? "메시지 " + arg.length + "자" : "");
+  return { ok: true, n: uniq.length };
+}
+function studentCommands(sid) {
+  if (!/^\d{3,}$/.test(String(sid || ""))) return { cmds: [] };
+  let list = [];
+  try { list = JSON.parse(CacheService.getScriptCache().get("cmd:" + sid) || "[]"); } catch (e) {}
+  return { cmds: list };
 }
 function monitorAll() {
   const cache = (function () { try { return CacheService.getScriptCache(); } catch (e) { return null; } })();

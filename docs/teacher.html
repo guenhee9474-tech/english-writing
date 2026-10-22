@@ -85,6 +85,18 @@
     padding:6px 8px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit}
   .card .take:disabled{opacity:.5; cursor:default}
   .closed{background:var(--red); color:#fff; padding:10px 16px; font-size:15px; font-weight:700}
+  .card .more{position:absolute; right:8px; bottom:8px; border:0; background:transparent; color:var(--muted); font-size:18px; line-height:1;
+    padding:4px 8px; border-radius:8px; cursor:pointer}
+  .card .more:hover{background:var(--gray-soft); color:var(--ink)}
+  .cmenu{position:fixed; z-index:50; min-width:220px; background:#fff; border:1px solid var(--line); border-radius:12px;
+    box-shadow:0 10px 30px rgba(27,36,54,.18); padding:6px; display:flex; flex-direction:column}
+  .cmenu[hidden], .tnote[hidden]{display:none}   /* display:flex 가 hidden 을 이기지 않게 (닫힌 메뉴가 클릭을 가로막았음) */
+  .cmenu .who{font-size:13px; color:var(--muted); padding:6px 10px 4px}
+  .cmenu button{border:0; background:transparent; text-align:left; padding:10px 12px; font-size:15px; border-radius:8px; cursor:pointer; font-family:inherit; color:var(--ink)}
+  .cmenu button:hover, .cmenu button:focus{background:var(--blue-soft)}
+  .cmenu button.danger{color:var(--red)}
+  .tnote{position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:var(--ink); color:#fff; padding:10px 18px;
+    border-radius:999px; font-size:14px; z-index:60; max-width:90vw; text-align:center}
 
   .msg{background:#fff; border:1px solid var(--line); border-radius:12px; padding:22px; margin:16px;
        font-size:16px; line-height:1.7}
@@ -109,6 +121,8 @@
 
 <div class="closed" id="closed" hidden>최종 글쓰기(2회차)가 닫혀 있습니다. 학생이 로그인해도 최종 단계가 열리지 않습니다. 열려면 Apps Script 편집기에서 openFinal 을 실행하세요.</div>
 <div class="bar" id="bar" hidden></div>
+<div class="cmenu" id="cmenu" hidden role="menu"></div>
+<div class="tnote" id="tnote" hidden role="status"></div>
 <main><div id="body"></div></main>
 
 <script>
@@ -224,6 +238,7 @@ function render(d) {
     (quietN ? '<div class="warnbox">조용함<b>' + quietN + "명</b></div>" : "") +
     (rosterN ? '<div class="warnbox">명단 확인<b>' + rosterN + "명</b></div>" : "") +
     '<div class="sp">' +
+      '<button id="classMenu" title="이 반 학생 모두에게">반 전체 ▾</button>' +
       '<button data-s="sid" class="' + (sortBy === "sid" ? "on" : "") + '">학번 순</button>' +
       '<button data-s="leave" class="' + (sortBy === "leave" ? "on" : "") + '">이탈 많은 순</button>' +
     "</div>";
@@ -254,17 +269,83 @@ function render(d) {
     else if (s.ph === "done") sub = "제출 " + clock(s.fn);
     else if (s.ph === "draftDone") sub = "초안 제출 " + clock(s.dr);
     else sub = (qm ? "⏸ " + qm + "분째 조용함" : ago(s.at) + " 저장") + (s.sn ? " · " + s.sn + "문장" : "");
-    return '<div class="' + cn.join(" ") + '">' +
+    return '<div class="' + cn.join(" ") + '" data-sid="' + esc(s.sid) + '" data-ph="' + esc(s.ph) + '" data-nm="' + esc(s.nm) + '">' +
       (s.lv > 0 ? '<div class="lv">' + s.lv + "</div>" : "") +
       '<div class="nm">' + esc(s.nm || "(이름 없음)") + "</div>" +
       '<div class="sid">' + esc(s.sid) + "</div>" +
       '<div class="st">' + esc(LABEL[s.ph] || "미접속") + "</div>" +
       (flags.length ? '<div class="flags">' + esc(flags.join(" · ")) + "</div>" : "") +
       '<div class="sub">' + esc(sub) + "</div>" +
+      (s.ph ? '<button class="more" data-more="' + esc(s.sid) + '" aria-label="' + esc(s.nm) + ' 조작" title="조작 (오른쪽 클릭과 같음)">⋯</button>' : "") +
       (s.kp ? '<button class="take" data-sid="' + esc(s.sid) + '" data-kp="' + esc(s.kp) + '" data-nm="' + esc(s.nm) + '" data-op="' + esc(LABEL[s.op] || s.op || "") + '">기존 기록 잇기 (' + esc(LABEL[s.op] || s.op || "") + ")</button>" : "") +
       "</div>";
   }).join("") + "</div>";
 }
+
+/* ── 학생 조작 (카드 오른쪽 클릭 또는 ⋯) ──
+   고른 조작은 서버에 잠깐 맡겨 두고, 학생 화면이 20초 안에 가져가 적용합니다. 선생님 열쇠가 있어야 보낼 수 있습니다. */
+const CMD_LABEL = { add5: "5분 더 주기", unlock: "잠금 풀고 5분 주기", todraft: "초안 쓰기 단계로 넘기기", submit: "지금 제출시키기", reopen: "제출 취소 (다시 열고 5분)", msg: "메시지 보내기" };
+function cmdsFor(ph) {
+  if (ph === "research") return ["add5", "todraft", "msg"];
+  if (ph === "draft" || ph === "final") return ["add5", "unlock", "submit", "msg"];
+  if (ph === "draftDone" || ph === "done") return ["reopen", "msg"];
+  return [];
+}
+let menuTarget = null;
+function openMenu(target, x, y) {
+  const m = $("cmenu");
+  const list = target.cls ? ["add5", "todraft", "msg"] : cmdsFor(target.ph);
+  if (!list.length) return;
+  menuTarget = target;
+  m.innerHTML = '<div class="who">' + esc(target.cls ? target.cls + " 전체 (들어와 있는 학생)" : target.sid + " " + target.nm + " · " + (LABEL[target.ph] || "")) + "</div>" +
+    list.map((c) => '<button role="menuitem" data-cmd="' + c + '"' + (c === "submit" || c === "reopen" ? ' class="danger"' : "") + ">" + CMD_LABEL[c] + "</button>").join("");
+  m.hidden = false;
+  const w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = Math.max(8, Math.min(x, innerWidth - w - 8)) + "px";
+  m.style.top = Math.max(8, Math.min(y, innerHeight - h - 8)) + "px";
+  const first = m.querySelector("button"); if (first) first.focus();
+}
+function closeMenu() { $("cmenu").hidden = true; menuTarget = null; }
+let tnoteTimer = null;
+function tnote(msg) { const n = $("tnote"); n.textContent = msg; n.hidden = false; clearTimeout(tnoteTimer); tnoteTimer = setTimeout(() => { n.hidden = true; }, 5000); }
+async function sendCmd(target, cmd) {
+  let arg = "";
+  const who = target.cls ? target.cls + " 전체" : target.sid + " " + target.nm;
+  if (cmd === "msg") {
+    arg = (prompt(who + "에게 보낼 메시지 (학생 화면에 안내창으로 뜹니다)", "") || "").trim();
+    if (!arg) return;
+  } else if (cmd === "submit" && !confirm(who + " 학생의 글을 지금 제출시킵니다. 계속할까요?")) return;
+  else if (cmd === "reopen" && !confirm(who + " 학생의 제출을 취소하고 다시 열어 5분을 줍니다. 계속할까요?")) return;
+  else if (target.cls && !confirm(who + "에게 '" + CMD_LABEL[cmd] + "'를 보냅니다. 계속할까요?")) return;
+  tnote("보내는 중…");
+  try {
+    const q = { action: "tcmd", k: KEY, cmd: cmd, arg: arg };
+    if (target.cls) q.cls = target.cls; else q.sid = target.sid;
+    const r = await ask(q, 30000);
+    if (r && r.ok) tnote((target.cls ? r.n + "명에게 " : who + " 학생에게 ") + "'" + CMD_LABEL[cmd] + "'를 보냈습니다. 학생 화면에 20초 안에 반영됩니다.");
+    else tnote("보내지 못했습니다: " + ((r && r.error) === "NO_TARGET" ? "보낼 학생이 없습니다" : (r && r.error) || "응답 없음"));
+  } catch (e) { tnote("보내지 못했습니다. 잠시 뒤 다시 해 보세요."); }
+}
+document.addEventListener("contextmenu", (e) => {
+  const card = e.target.closest(".card[data-sid]");
+  if (!card || !card.dataset.ph) return;
+  e.preventDefault();
+  openMenu({ sid: card.dataset.sid, ph: card.dataset.ph, nm: card.dataset.nm }, e.clientX, e.clientY);
+});
+document.addEventListener("click", (e) => {
+  const more = e.target.closest("[data-more]");
+  if (more) {
+    const card = more.closest(".card"); const r = more.getBoundingClientRect();
+    e.stopPropagation();
+    return openMenu({ sid: card.dataset.sid, ph: card.dataset.ph, nm: card.dataset.nm }, r.left, r.bottom + 4);
+  }
+  if (e.target.id === "classMenu") { const r = e.target.getBoundingClientRect(); return openMenu({ cls: cls }, r.left, r.bottom + 4); }
+  const item = e.target.closest("#cmenu [data-cmd]");
+  if (item && menuTarget) { const t = menuTarget; closeMenu(); return sendCmd(t, item.dataset.cmd); }
+  if (!e.target.closest("#cmenu")) closeMenu();
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(); });
+window.addEventListener("scroll", closeMenu, true);
 
 /* "중복" 카드의 기존 기록 잇기.
    학생 기기의 열쇠가 사라져(다른 아이패드, Safari 기록 삭제, 7일 넘게 안 들어옴 등) 새 줄로 시작한 학생을

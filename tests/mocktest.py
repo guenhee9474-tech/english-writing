@@ -47,6 +47,7 @@ TAKEN = set()    # "기존 기록 잇기" 뒤 아직 다시 로그인하지 않�
 TKEY = 'teacher-key-for-test'
 ROSTER = {}      # "명단" 탭 흉내. 비어 있으면 누구나 등록
 BUSY = {'n': 0}  # 남은 "동시 실행 너무 많음" 응답 수
+CMDS = {}        # 현황판 조작: 학번 -> [조작]
 
 CORS = {'Access-Control-Allow-Origin': '*'}
 # 읽기를 어떤 방식으로 했는지 센다. 새 방식(쿠키 없는 fetch)이 실제로 쓰여야 한다.
@@ -147,6 +148,15 @@ def mock(route):
         out = monitor(g('k'))
     elif action == 'takeover':
         out = takeover(g('k'), sid, g('kp'))
+    elif action == 'tcmd':                   # gas/Code.gs 의 teacherCommand 와 같은 규칙
+        if g('k') != TKEY:
+            out = {'error': 'BAD_KEY'}
+        else:
+            targets = [x['sid'] for x in monitor(TKEY)['students'] if x['c'] == g('cls') and x['ph'] and x['ph'] != 'done'] if g('cls') else [sid]
+            item = {'id': uuid.uuid4().hex[:8], 'cmd': g('cmd'), 'arg': g('arg'), 't': int(time.time() * 1000)}
+            for t in dict.fromkeys(targets):
+                CMDS.setdefault(t, []).append(item)
+            out = {'ok': True, 'n': len(dict.fromkeys(targets))} if targets else {'error': 'NO_TARGET'}
     elif g('token') != TOKEN:
         out = {'error': 'BAD_TOKEN'}
     elif action == 'load':
@@ -185,6 +195,8 @@ def mock(route):
         out['finalOpen'] = True
         rr = find(sid, out.get('key') or '')
         out['finalAt'] = rr['finalAt'] if rr and rr['phase'] == 'done' else None
+    elif action == 'cmd':
+        out = {'cmds': CMDS.get(sid, [])}
     elif action == 'check':
         out = {'draftAt': None, 'finalAt': None, 'draftPdf': '', 'finalPdf': '', 'phase': '', 'savedAt': None}
         if key:                              # 열쇠가 없으면 아무것도 확인해 주지 않는다
@@ -874,6 +886,59 @@ with sync_playwright() as p:
     P.click('#submitBtn'); P.wait_for_selector('#modal:not([hidden])'); P.click('#modalOk'); P.wait_for_selector('#done:not([hidden])'); P.wait_for_timeout(800)
     check('제출 화면에서도 PDF 단추가 보임', not P.eval_on_selector('#pdfBtn', 'e=>e.hidden'))
     ctxP.close()
+
+    # ── T21. 현황판에서 학생 조작: 카드 오른쪽 클릭 → 학생 화면에 반영 ──
+    print('T21 현황판 조작')
+    ctxS, Sx = new_page(b)
+    Sx.goto('http://127.0.0.1:8880/index.html?as=1&cp=1'); Sx.wait_for_timeout(300)
+    Sx.fill('#sid', '10207'); Sx.fill('#name', '조작학생'); Sx.click('#startBtn'); Sx.wait_for_timeout(1500)
+    ctxS2, S2 = new_page(b)
+    S2.goto('http://127.0.0.1:8880/index.html?as=1&cp=1'); S2.wait_for_timeout(300)
+    S2.fill('#sid', '10208'); S2.fill('#name', '조작둘'); S2.click('#startBtn'); S2.wait_for_timeout(1500)
+    ctxT2 = b.new_context(viewport={'width': 1280, 'height': 900}); T2 = ctxT2.new_page()
+    T2.route(SCRIPT + '*', mock)
+    answers = {'prompt': '책상 위를 정리하세요'}
+    T2.on('dialog', lambda d: d.accept(answers['prompt'] if d.type == 'prompt' else None))
+    T2.goto('http://127.0.0.1:8880/teacher.html#k=' + TKEY); T2.wait_for_selector('.card', timeout=15000)
+    tab = T2.query_selector('.tabs button[data-c="1학년 2반"]')
+    if tab: tab.click(); T2.wait_for_timeout(1500)
+    def menu(sid, label, right=True):
+        card = T2.wait_for_selector('.card[data-sid="%s"]' % sid, timeout=10000)
+        if right: card.click(button='right')
+        else: T2.click('.card[data-sid="%s"] .more' % sid)
+        T2.wait_for_selector('#cmenu:not([hidden])', timeout=5000)
+        T2.click('#cmenu button:has-text("%s")' % label); T2.wait_for_timeout(1200)
+    menu('10207', '5분 더 주기')
+    check('현황판: 보냈다는 안내', '보냈습니다' in T2.inner_text('#tnote'), T2.inner_text('#tnote')[:50])
+    Sx.wait_for_timeout(2500)
+    check('학생 화면: 5분이 늘어남', Sx.evaluate('state.extraSec') == 300, Sx.evaluate('state.extraSec'))
+    check('다른 학생에게는 안 감', S2.evaluate('state.extraSec || 0') == 0)
+    menu('10207', '초안 쓰기 단계로', right=False)
+    Sx.wait_for_timeout(2500)
+    check('학생 화면: 초안 단계로 넘어감 (⋯ 단추)', Sx.inner_text('#phaseLabel') == '초안 쓰기', Sx.inner_text('#phaseLabel'))
+    T2.wait_for_timeout(3500)    # 현황 화면이 새 단계를 읽어 오게
+    menu('10207', '메시지 보내기')
+    Sx.wait_for_timeout(2500)
+    check('학생 화면: 선생님 메시지 창', '선생님 메시지' in Sx.inner_text('#dlgTitle') and '책상 위를 정리하세요' in Sx.inner_text('#dlgText'), Sx.inner_text('#dlgText')[:30])
+    Sx.click('#dlgActions button:has-text("확인")'); Sx.wait_for_timeout(300)
+    type_line(Sx, 0, 0, 'Teacher made me submit.'); Sx.wait_for_timeout(500)
+    menu('10207', '지금 제출시키기')
+    Sx.wait_for_timeout(3500)
+    check('학생 화면: 지금 제출됨', not Sx.eval_on_selector('#done', 'e=>e.hidden') and Sx.evaluate('state.phase') == 'draftDone', Sx.evaluate('state.phase'))
+    T2.wait_for_timeout(3500)
+    menu('10207', '제출 취소')
+    Sx.wait_for_timeout(3500)
+    check('학생 화면: 제출 취소로 다시 열림', Sx.evaluate('state.phase') == 'draft' and not Sx.eval_on_selector('#app', 'e=>e.hidden'), Sx.evaluate('state.phase'))
+    T2.click('#classMenu'); T2.wait_for_selector('#cmenu:not([hidden])')
+    T2.click('#cmenu button:has-text("5분 더 주기")'); T2.wait_for_timeout(1500)
+    check('반 전체: 보낸 학생 수 안내', '명에게' in T2.inner_text('#tnote'), T2.inner_text('#tnote')[:40])
+    Sx.wait_for_timeout(2500)
+    check('반 전체: 두 학생 모두 반영', S2.evaluate('state.extraSec') == 300 and Sx.evaluate('state.extraSec') >= 300, [S2.evaluate('state.extraSec'), Sx.evaluate('state.extraSec')])
+    Sx.wait_for_timeout(1500)
+    lastS = [x for x in posts if x['sid'] == '10207' and x['phase'] == 'save']
+    check('학생 기록에 현황판 조작이 남음', bool(lastS) and '현황판: 5분 추가' in lastS[-1]['meta'] and '현황판: 제출 취소' in lastS[-1]['meta'], lastS[-1]['meta'][-120:] if lastS else '')
+    check('같은 조작을 두 번 적용하지 않음', Sx.evaluate("state.tlog.filter(x => x.a === '현황판: 5분 추가').length") == 2)
+    for c_ in (ctxS, ctxS2, ctxT2): c_.close()
 
     # ── 마무리 ──
     print('마무리')

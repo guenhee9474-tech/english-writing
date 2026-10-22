@@ -524,7 +524,7 @@
    교사용 설정 (여기만 고치면 됩니다)
    ════════════════════════════════════════════════════════════════ */
 const CONFIG = {
-  version: "2026-10-22 (비상 PDF·속도)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
+  version: "2026-10-22b (현황판 조작)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
   title: "Good for All of Us: A Place for Everyone",
   subtitle: "1학년 2학기 영어 쓰기 수행평가",
 
@@ -1706,7 +1706,7 @@ window.addEventListener("online", () => {
 
 function showDone(kind) {
   $("app").hidden = true; $("gate").hidden = true; $("done").hidden = false;
-  updatePdfBtn();
+  updatePdfBtn(); startCmdPoll();
   const isDraft = kind === "draft";
   $("doneTitle").textContent = isDraft ? "1회차 제출 완료" : "제출되었습니다";
   $("doneHint").textContent = isDraft
@@ -1846,6 +1846,72 @@ function dialog(o) {
   });
 }
 
+// ---------- 교사 조작 (교사 메뉴·현황판에서 함께 씀) ----------
+function doUnlock(by) {
+  if (remainingSec() <= 0) state.extraSec = (state.extraSec || 0) + (-remainingSec()) + 300;
+  teacherNote(by + "잠금 해제+5분");
+  $("banner").hidden = true; setLocked(false); save(); markDirty(); startTick(); setTimeout(onFsChange, 300);
+}
+async function doReopen(by) {
+  if (state.phase === "done") { state.submitted = false; state.sent = null; state.submitReason = ""; state.pdfFinal = false; setPhase("final"); state.extraSec = 300; }
+  else { state.draftSent = null; state.draftSubmittedAt = 0; state.pdfDraft = false; setPhase("draft"); state.extraSec = 300; }
+  teacherNote(by + "제출 취소→" + (PHASE_LABEL[state.phase] || state.phase));
+  state.reopenTo = state.phase;     // 서버가 받았다고 답할 때까지 기억했다가, 안 됐으면 다시 알립니다
+  save(); $("done").hidden = true; $("banner").hidden = true;
+  // 서버에도 단계를 되돌린다고 알립니다. 알리지 않으면 서버가 "이미 제출됨"으로 알고 있어서
+  // 다시 쓴 글이 시트에 저장되지 않습니다(서버가 STALE 로 거절).
+  await reopenOnServer(state.phase);
+  enterApp();
+}
+
+// ---------- 현황판 조작 받기 ----------
+// 선생님이 현황 화면에서 보낸 조작(5분 더, 지금 제출, 메시지 등)을 20초마다 가져와 적용합니다.
+// 서버는 캐시만 읽으므로 가볍습니다. 적용한 조작 번호는 기억해 두어 두 번 하지 않습니다.
+let cmdTimer = null, cmdBusy = false;
+function startCmdPoll() {
+  if (cmdTimer || !CONFIG.submit.scriptUrl) return;
+  const sec = +urlQ.get("cp") || 20;
+  cmdTimer = setTimeout(function loop() { checkCmds().finally(() => { cmdTimer = setTimeout(loop, sec * 1000 + Math.random() * 3000); }); },
+                        urlQ.get("cp") ? 500 : 3000 + Math.random() * 5000);
+}
+async function checkCmds() {
+  if (cmdBusy || !state.sid || ($("app").hidden && $("done").hidden)) return;
+  cmdBusy = true;
+  try {
+    const r = await askServer({ action: "cmd", sid: state.sid }, 10000);
+    const seen = state.cmdDone || [];
+    for (const c of (r && r.cmds) || []) {
+      if (!c || !c.id || seen.includes(c.id) || (state.startedAt && c.t && c.t < state.startedAt)) continue;   // 이 기기에서 시작하기 전에 보낸 것은 무시
+      seen.push(c.id);
+      state.cmdDone = seen.slice(-50); save();
+      await applyCmd(c);
+    }
+  } catch (e) { /* 다음 차례에 다시 */ }
+  finally { cmdBusy = false; }
+}
+async function applyCmd(c) {
+  const by = "현황판: ";
+  const writing = state.phase === "draft" || state.phase === "final";
+  if (c.cmd === "add5" && writing || c.cmd === "add5" && state.phase === "research") {
+    state.extraSec = (state.extraSec || 0) + 300; teacherNote(by + "5분 추가"); save(); markDirty(); tick();
+    toast("선생님이 5분을 더 주셨습니다.", 3500);
+  } else if (c.cmd === "unlock" && writing) {
+    doUnlock(by); toast("선생님이 잠금을 풀고 5분을 주셨습니다.", 3500);
+  } else if (c.cmd === "todraft" && state.phase === "research") {
+    teacherNote(by + "초안 단계로 넘김"); startDraft(false, "교사 전환(현황판)"); toast("선생님이 초안 쓰기 단계로 넘기셨습니다.", 3500);
+  } else if (c.cmd === "submit" && state.phase === "draft") {
+    teacherNote(by + "지금 제출"); submitDraft("교사 지시 제출");
+  } else if (c.cmd === "submit" && state.phase === "final") {
+    teacherNote(by + "지금 제출"); submitNow("교사 지시 제출");
+  } else if (c.cmd === "reopen" && (state.phase === "draftDone" || state.phase === "done")) {
+    await doReopen(by); toast("선생님이 다시 열어 주셨습니다. 5분이 주어집니다.", 3500);
+  } else if (c.cmd === "msg" && c.arg) {
+    teacherNote(by + "메시지"); save(); markDirty();
+    suppressLeaveUntil = Date.now() + 1500;
+    await dialog({ title: "선생님 메시지", text: String(c.arg), buttons: [{ label: "확인", value: "ok", primary: true }] });
+  }
+}
+
 // ---------- 교사 메뉴 ----------
 // 입력한 PIN 을 PBKDF2(15만 번)로 바꿔 CONFIG.teacherPinHash 와 비교합니다.
 // 한 번 확인에 아이패드에서 0.1~0.3초가 걸리므로, 소스를 보고 PIN 을 하나씩 맞혀 보는 것이 사실상 불가능합니다.
@@ -1893,22 +1959,8 @@ async function teacherMenu() {
     // 교사 메뉴로 한 일은 모두 기록합니다(자동집계·PDF 에 남음). PIN 이 새어 학생이 쓰더라도 흔적이 남게.
     if (c.value === "add") { state.extraSec = (state.extraSec || 0) + 300; teacherNote("5분 추가"); save(); markDirty(); tick(); toast("5분을 추가했습니다."); }
     else if (c.value === "todraft") { teacherNote("초안 단계로 넘김"); startDraft(false, "교사 전환"); toast("초안 단계로 넘겼습니다."); }
-    else if (c.value === "unlock") {
-      if (remainingSec() <= 0) state.extraSec = (state.extraSec || 0) + (-remainingSec()) + 300;
-      teacherNote("잠금 해제+5분");
-      $("banner").hidden = true; setLocked(false); save(); markDirty(); startTick(); toast("잠금을 해제했습니다."); setTimeout(onFsChange, 300);
-    }
-    else if (c.value === "reopen") {
-      if (state.phase === "done") { state.submitted = false; state.sent = null; state.submitReason = ""; state.pdfFinal = false; setPhase("final"); state.extraSec = 300; }
-      else { state.draftSent = null; state.draftSubmittedAt = 0; state.pdfDraft = false; setPhase("draft"); state.extraSec = 300; }
-      teacherNote("제출 취소→" + (PHASE_LABEL[state.phase] || state.phase));
-      state.reopenTo = state.phase;     // 서버가 받았다고 답할 때까지 기억했다가, 안 됐으면 다시 알립니다
-      save(); $("done").hidden = true; $("banner").hidden = true;
-      // 서버에도 단계를 되돌린다고 알립니다. 알리지 않으면 서버가 "이미 제출됨"으로 알고 있어서
-      // 다시 쓴 글이 시트에 저장되지 않습니다(서버가 STALE 로 거절).
-      await reopenOnServer(state.phase);
-      enterApp(); toast("다시 열었습니다. 5분이 주어집니다.");
-    }
+    else if (c.value === "unlock") { doUnlock(""); toast("잠금을 해제했습니다."); }
+    else if (c.value === "reopen") { await doReopen(""); toast("다시 열었습니다. 5분이 주어집니다."); }
     else if (c.value === "finalOnly") {
       if (!state.startedAt) newState(state.sid, state.name);
       state.phaseLog = state.phaseLog || {}; state.draftReason = "초안 없음(교사 허용)";
@@ -1968,7 +2020,7 @@ function restoreState(saved) {
 
 function enterApp() {
   $("gate").hidden = true; $("done").hidden = true; $("app").hidden = false;
-  updatePdfBtn();
+  updatePdfBtn(); startCmdPoll();
   locked = false;
   applyPhase(); save(); startTick(); ensureFsSoon(); startAutosave(); dirty = true;
   // 글자 수·한글 기준값은 칸을 채운 뒤에 심어야 합니다. applyPhase() 안에서 칸이 새로 만들어지기 때문입니다.
