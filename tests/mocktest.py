@@ -850,6 +850,31 @@ with sync_playwright() as p:
     check('초안 제출이 결국 된다', rowN['draftAt'] is not None and '저장되었습니다' in N.inner_text('#doneStatus'), N.inner_text('#doneStatus')[:60])
     ctxN.close()
 
+    # ── T20. 비상용 PDF 저장: 오른쪽 아래 작은 단추 → 인쇄·공유 창. 이탈로 세지 않고, 횟수는 자동집계에 남김 ──
+    print('T20 비상용 PDF 저장')
+    ctxP, P = new_page(b)
+    P.goto('http://127.0.0.1:8880/index.html?as=1'); P.wait_for_timeout(400)
+    check('로그인 전에는 PDF 단추가 안 보임', P.eval_on_selector('#pdfBtn', 'e=>e.hidden'))
+    P.fill('#sid', '10206'); P.fill('#name', '나비상'); P.click('#startBtn'); P.wait_for_timeout(1200)
+    check('글 화면에서는 PDF 단추가 보임', not P.eval_on_selector('#pdfBtn', 'e=>e.hidden'))
+    box = P.eval_on_selector('#pdfBtn', 'e=>{const r=e.getBoundingClientRect(); return [r.right, r.bottom, innerWidth, innerHeight, getComputedStyle(e).opacity]}')
+    check('단추는 오른쪽 아래 구석에 흐리게', box[2] - box[0] < 12 and box[3] - box[1] < 12 and float(box[4]) < 0.5, box)
+    start_draft(P)
+    type_line(P, 0, 0, 'Emergency backup sentence here.'); P.wait_for_timeout(300)
+    leaves0 = P.evaluate('state.leaves.length')
+    P.evaluate("window.__printed = 0; window.print = () => { window.__printed++; window.dispatchEvent(new Event('blur')); }; 0")   # 끝을 0 으로: 함수로 끝나면 시험 도구가 그 함수를 한 번 불러 버림
+    P.click('#pdfBtn'); P.wait_for_timeout(1800)
+    check('인쇄·공유 창을 부름', P.evaluate('window.__printed') == 1, P.evaluate('window.__printed'))
+    pv = P.inner_text('#printView')
+    check('PDF 내용에 학번·이름·쓴 글이 들어감', '10206' in pv and '나비상' in pv and 'Emergency backup sentence' in pv and 'Step 3 초안' in pv, pv[:80])
+    check('PDF 저장하는 동안 이탈로 세지 않음', P.evaluate('state.leaves.length') == leaves0)
+    P.wait_for_timeout(1500)
+    lastP = [x for x in posts if x['sid'] == '10206' and x['phase'] == 'save']
+    check('PDF 저장 횟수가 자동집계에 남음', bool(lastP) and 'PDF저장 1회' in lastP[-1]['meta'], lastP[-1]['meta'][-60:] if lastP else '')
+    P.click('#submitBtn'); P.wait_for_selector('#modal:not([hidden])'); P.click('#modalOk'); P.wait_for_selector('#done:not([hidden])'); P.wait_for_timeout(800)
+    check('제출 화면에서도 PDF 단추가 보임', not P.eval_on_selector('#pdfBtn', 'e=>e.hidden'))
+    ctxP.close()
+
     # ── 마무리 ──
     print('마무리')
     allerrs = {'A': A.errs, 'C': C.errs, 'G': G.errs, 'I': I.errs}

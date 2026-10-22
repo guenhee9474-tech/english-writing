@@ -267,6 +267,19 @@
   .dlg .modal-actions{flex-wrap:wrap}
 
   /* 안내 토스트, 모달 */
+  .pdf-mini{position:fixed;right:4px;bottom:4px;z-index:30;font:600 10px/1 var(--sans);letter-spacing:.5px;padding:4px 6px;border:0;border-radius:6px;background:transparent;color:var(--muted);opacity:.28;cursor:pointer}
+  .pdf-mini:hover,.pdf-mini:focus-visible{opacity:1;background:var(--surface);outline:1px solid var(--line-strong)}
+  .print-view{display:none}
+  @media print{
+    body > *:not(.print-view){display:none !important}
+    body{background:#fff}
+    .print-view{display:block !important;color:#111;font:12pt/1.55 var(--sans);padding:0}
+    .print-view h1{font-size:16pt;margin:0 0 4pt}
+    .print-view h2{font-size:12.5pt;margin:14pt 0 4pt;border-bottom:1px solid #999;padding-bottom:2pt}
+    .print-view .pv-meta{font-size:10pt;color:#333;margin:0 0 6pt}
+    .print-view pre{white-space:pre-wrap;word-break:keep-all;font:inherit;margin:0}
+    .print-view .pv-small{font-size:9pt;color:#444}
+  }
   .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:999px;font-size:14px;z-index:50;max-width:90vw;text-align:center}
   .modal{position:fixed;inset:0;background:rgba(27,36,54,.45);display:flex;align-items:center;justify-content:center;padding:20px;z-index:40}
   .modal-card{background:var(--surface);border-radius:14px;padding:26px 26px 22px;max-width:460px;width:100%}
@@ -500,6 +513,10 @@
   <p class="dict-note">한 번에 단어 하나만 찾을 수 있고, 찾은 단어는 모두 제출물에 기록됩니다.<br>기본형으로 찾으면 더 정확합니다. (예: 배고픈 → 배고프다)</p>
 </div>
 
+<!-- 비상용: 지금까지 쓴 글을 PDF 로 (아이패드 인쇄·공유 창 → 파일에 저장 / 메일). 눈에 띄지 않게 오른쪽 아래에 작게 -->
+<button id="pdfBtn" class="pdf-mini" type="button" hidden aria-label="지금까지 쓴 글을 PDF로 저장">PDF</button>
+<div id="printView" class="print-view" aria-hidden="true"></div>
+
 <div id="toast" class="toast" hidden></div>
 
 <script>
@@ -507,7 +524,7 @@
    교사용 설정 (여기만 고치면 됩니다)
    ════════════════════════════════════════════════════════════════ */
 const CONFIG = {
-  version: "2026-10-21c (명단 확인)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
+  version: "2026-10-22 (비상 PDF·속도)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
   title: "Good for All of Us: A Place for Everyone",
   subtitle: "1학년 2학기 영어 쓰기 수행평가",
 
@@ -1203,6 +1220,7 @@ function buildLiveMeta() {
   parts.push("환경 " + (ENV.standalone ? "홈화면앱" : "브라우저"));
   parts.push("소요 조사 " + mins(L.researchStart, L.researchEnd || Date.now()) + " / 초안 " + mins(L.draftStart, L.draftEnd || Date.now()) + " / 최종 " + mins(L.finalStart, L.finalEnd || Date.now()));
   if (teacherLogText(false)) parts.push(teacherLogText(true));
+  if (state.pdfSaves) parts.push("PDF저장 " + state.pdfSaves + "회");
   return parts.join(" | ");
 }
 function buildMeta(reason, kind) {
@@ -1230,6 +1248,7 @@ function buildMeta(reason, kind) {
   if (state.draftSubmittedAt) parts.push("1회차 제출 " + fmtClock(new Date(state.draftSubmittedAt)).slice(0, 5) + " (" + (state.draftReason || "") + ")");
   if (kind === "final") parts.push("최종 제출 " + fmtClock(new Date(state.submittedAt)).slice(0, 5) + " (" + reason + ")");
   if (teacherLogText(false)) parts.push(teacherLogText(true));
+  if (state.pdfSaves) parts.push("PDF저장 " + state.pdfSaves + "회");
   return parts.join(" | ");
 }
 
@@ -1508,6 +1527,39 @@ async function reopenOnServer(to) {
     return reply;
   } catch (e) { return ""; }
 }
+// ---------- 비상용 PDF 저장 ----------
+// 서버가 꼬였을 때를 대비해, 지금까지 쓴 글 전체를 아이패드의 인쇄·공유 창으로 PDF 로 저장하거나 메일로 보냅니다.
+// 이 단추를 쓰는 동안은 이탈로 세지 않고, 몇 번 눌렀는지는 자동집계에 'PDF저장 n회'로 남깁니다.
+function updatePdfBtn() {
+  const b = $("pdfBtn");
+  if (b) b.hidden = !state.sid || ($("app").hidden && $("done").hidden);
+}
+function buildPrintView() {
+  const now = new Date();
+  const ymd = now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate());
+  const sec = (title, body) => "<h2>" + escapeHtml(title) + "</h2><pre>" + escapeHtml(body || "(비어 있음)") + "</pre>";
+  const s1 = CONFIG.step1Parts.map((p, i) => p + ": " + (state.step1[i] || "").trim()).join("\n");
+  const s2 = CONFIG.step2Items.map((p, i) => step2Label(p) + " " + (state.step2[i] || "").trim()).join("\n");
+  $("printView").innerHTML =
+    "<h1>" + escapeHtml(CONFIG.title) + "</h1>" +
+    '<p class="pv-meta">' + escapeHtml(CONFIG.subtitle) + " · 학번 " + escapeHtml(state.sid) + " · 이름 " + escapeHtml(state.name) +
+    " · 단계 " + escapeHtml(PHASE_LABEL[state.phase] || state.phase) + " · 저장 " + ymd + " " + fmtClock(now) + "</p>" +
+    sec("Step 1", s1) + sec("Step 2", s2) + sec("Step 3 초안", buildDraft()) +
+    (ORDER[state.phase] >= ORDER.final ? sec("Step 4 최종본", state.final) : "") +
+    '<h2>자동 집계</h2><pre class="pv-small">' + escapeHtml(buildMeta(state.submitReason || "PDF 저장", state.submitted ? "final" : "draft")) + "</pre>" +
+    '<p class="pv-small">비상용 PDF (작성 페이지 버전 ' + escapeHtml(CONFIG.version || "") + ")</p>";
+}
+function savePdfLocal() {
+  suppressLeaveUntil = Date.now() + 120000;          // 인쇄·공유 창이 떠 있는 동안은 이탈로 세지 않음
+  state.pdfSaves = (state.pdfSaves || 0) + 1; save(); markDirty();
+  buildPrintView();
+  const oldTitle = document.title;
+  document.title = state.sid + "_" + state.name + "_영어쓰기";   // 저장되는 PDF 이름
+  const done = () => { document.title = oldTitle; suppressLeaveUntil = Date.now() + 1500; window.removeEventListener("afterprint", done); };
+  window.addEventListener("afterprint", done);
+  try { window.print(); } catch (e) { done(); toast("이 기기에서는 PDF로 저장할 수 없습니다. '파일로 저장'을 쓰세요."); }
+  setTimeout(() => { if (document.title !== oldTitle && !document.hidden) document.title = oldTitle; }, 60000);
+}
 function teacherNote(what) {
   state.tlog = state.tlog || [];
   state.tlog.push({ t: Date.now(), a: what });
@@ -1654,6 +1706,7 @@ window.addEventListener("online", () => {
 
 function showDone(kind) {
   $("app").hidden = true; $("gate").hidden = true; $("done").hidden = false;
+  updatePdfBtn();
   const isDraft = kind === "draft";
   $("doneTitle").textContent = isDraft ? "1회차 제출 완료" : "제출되었습니다";
   $("doneHint").textContent = isDraft
@@ -1895,7 +1948,7 @@ function newState(sid, name) {
   state.phase = "research"; state.phaseStartedAt = 0; state.phaseLog = {}; state.savedAt = 0;
   state.draftSubmittedAt = 0; state.draftReason = ""; state.draftSent = null; state.fsNote = ""; state.lookups = []; state.autoText = 0;
   state.leavesDropped = 0; state.title = CONFIG.title; state.subtitle = CONFIG.subtitle;
-  state.tlog = []; delete state.reopenTo; state.pdfDraft = false; state.pdfFinal = false;
+  state.tlog = []; delete state.reopenTo; state.pdfSaves = 0; state.pdfDraft = false; state.pdfFinal = false;
 }
 function restoreState(saved) {
   Object.assign(state, saved);
@@ -1915,6 +1968,7 @@ function restoreState(saved) {
 
 function enterApp() {
   $("gate").hidden = true; $("done").hidden = true; $("app").hidden = false;
+  updatePdfBtn();
   locked = false;
   applyPhase(); save(); startTick(); ensureFsSoon(); startAutosave(); dirty = true;
   // 글자 수·한글 기준값은 칸을 채운 뒤에 심어야 합니다. applyPhase() 안에서 칸이 새로 만들어지기 때문입니다.
@@ -2101,6 +2155,7 @@ function init() {
   $("copyBtn").addEventListener("click", copyFinal);
   $("saveBtn").addEventListener("click", saveFile);
   $("retryBtn").addEventListener("click", retrySend);
+  $("pdfBtn").addEventListener("click", savePdfLocal);
   ["teacherBtn", "teacherBtn2", "teacherBtn3", "teacherBtn4"].forEach((id) => { const b = $(id); if (b) b.addEventListener("click", teacherMenu); });
   $("fsResume").addEventListener("click", () => {
     requestFs();
