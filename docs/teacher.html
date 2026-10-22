@@ -355,6 +355,10 @@ if (!KEY) {
 } else {
   load(true);
   setInterval(load, REFRESH_SEC * 1000);
+  // 총괄 탭 다시 쓰기·빠진 PDF 채우기는 1분마다 따로 부릅니다(기다리지 않음). 3초 새로 읽기가 그 일 때문에 멈추지 않게.
+  const ovTick = () => { ask({ action: "ovtick", k: KEY }, 120000).catch(() => {}); };
+  setTimeout(ovTick, 15000);
+  setInterval(ovTick, 60000);
   setInterval(tickFresh, 1000);
   // 화면을 다시 보면 바로 한 번 읽습니다
   document.addEventListener("visibilitychange", () => { if (!document.hidden) load(true); });

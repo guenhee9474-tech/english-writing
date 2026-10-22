@@ -198,9 +198,9 @@ function handlePost(e) {
 
     // 같은 제출이 다시 왔으면(학생 화면이 확인을 못 해 다시 보냄) 명단에 또 적지 않습니다.
     if (st.phase === "done" && recentAt(st.finalAt)) return okWith("OK");
-    // 2회차: 글 저장(반드시, 실패하면 ERROR) → 제출명단 한 줄. PDF 는 따로(phase=pdf).
+    // 2회차: 글 저장(반드시, 실패하면 ERROR)만 하고 답함. 제출명단 한 줄과 PDF 는 따로(phase=pdf), 학생은 기다리지 않음.
+    // (2026-10-22: 제출명단 기록이 저장과 같은 잠금을 한 번 더 기다리게 해서, 90명이 동시에 내면 최종 제출만 14초 걸렸음)
     saveDraft(data, p.data || "", "done", "", { allowRegress: true });
-    if (CFG.logSheet) { try { logRow(data, []); } catch (e1) { logError("제출명단 기록", e1, data.sid); } }
     // 총괄 시트는 제출 요청에서 다시 쓰지 않습니다(그 학생이 십수 초를 기다리게 됨).
     // 선생님 현황 화면이 열려 있으면 그 요청이, 아니면 작성 중 자동 저장이 갱신합니다.
     return okWith("OK");
@@ -239,6 +239,7 @@ function getAction(p) {
     // 선생님 현황 화면은 학생용 token 이 아니라 자기 열쇠(k)로 확인합니다. 그래서 token 검사보다 먼저 봅니다.
     if (p.action === "monitor") out = monitorData(p.cls || "", p.k || "");
     else if (p.action === "takeover") out = takeover(p.sid, p.kp, p.k || "");   // 현황 화면의 "기존 기록 잇기"
+    else if (p.action === "ovtick") out = overviewTick(p.k || "");               // 현황 화면이 1분마다 따로 부름
     else if (CFG.token && p.token !== CFG.token) out = { error: "BAD_TOKEN" };
     else if (p.action === "load") {                 // 로그인: 열쇠 확인·발급 + 저장된 상태 + 최종 제출 여부 + 최종 단계 열림 여부
       out = loadOrRegister(p.sid, p.name, p.key, p.nameOk === "1", String(p.rid || "").slice(0, 40), p.rosterOk === "1");
@@ -789,9 +790,9 @@ function saveDraft(d, json, phase, pdfLink, opts) {
     }
     const row = [d.sid, old[COL.name - 1] || d.name, d.key, old[COL.reg - 1] || now, now, ph,
       num(d.meta, /초안 문장 (\d+)/), safeCell(d.meta), safeCell(String(d.brainstorm || "").slice(0, 20000)), safeCell(String(d.draft || "").slice(0, 20000)),
-      (phase === "draftDone" && pdfLink) ? pdfLink : String(old[COL.pdf - 1] || ""), js, old[COL.dup - 1] || "",
+      phase === "draftDone" ? (pdfLink || "") : String(old[COL.pdf - 1] || ""), js, old[COL.dup - 1] || "",   // 제출하면 PDF 칸을 비워 새로 만들게 (제출 취소 뒤 다시 낸 글)
       phase === "draftDone" ? now : (old[COL.draftAt - 1] || ""), phase === "done" ? now : (old[COL.finalAt - 1] || ""),
-      (phase === "done" && pdfLink) ? pdfLink : String(old[COL.finalPdf - 1] || "")];
+      phase === "done" ? (pdfLink || "") : String(old[COL.finalPdf - 1] || "")];
     sh.getRange(r, 1, 1, row.length).setValues([row]);
     return "OK";
   }, true);
@@ -849,10 +850,10 @@ function makePdfNow(d, kind, st) {
   if (cache.get(ck)) return "WAIT_PDF";                              // 같은 PDF 를 지금 다른 요청이 만드는 중
   cache.put(ck, "1", 120);
   try {
-    const url = savePdf(d, kind)[0].getUrl();
+    const file = savePdf(d, kind)[0], url = file.getUrl();
     setPdfLink(d, kind === "final" ? COL.finalPdf : COL.pdf, url);
     if (kind === "final") {
-      updateLogFile(d.sid, d.key, url);
+      if (CFG.logSheet) { try { logRow(d, [file]); } catch (e1) { logError("제출명단 기록", e1, d.sid); } }   // 최종 PDF 가 생길 때 한 줄
       if (CFG.notifyEmail) { try { sendMail(d, [DriveApp.getFileById(url.match(/[-\w]{25,}/)[0])]); } catch (e2) { logError("메일 보내기", e2, d.sid); } }
     }
     return "OK_PDF";
@@ -1220,18 +1221,18 @@ function cachedFolder(prop, make) {
 /* ────────────────────────── 제출 명단 시트 ────────────────────────── */
 
 function logRow(d, files) {
-  // 줄을 맨 아래에 새로 붙이기만 하므로 잠금을 못 잡아도 안전합니다. 제출을 놓치는 것이 더 나쁩니다.
-  return withLock(20000, "제출명단 " + d.sid, function () {
+  // 동시에 appendRow 를 하면 줄이 서로 덮일 수 있어(2026-10-21 부하 시험) 반드시 잠금 안에서 붙입니다.
+  return withLock(SAVE_LOCK_MS, "제출명단 " + d.sid, function () {
     const sheet = getLogSheet();
     sheet.appendRow([
       new Date(), d.sid, safeCell(d.name),
       num(d.meta, /최종 문장 (\d+)/), num(d.meta, /표현 (\d+)/),
       num(d.meta, /화면이탈 (\d+)/), num(d.meta, /한글입력 (\d+)/),
       safeCell(d.meta),
-      files.length && files[0] ? files[0].getUrl() : "PDF 만드는 중",   // PDF 가 만들어지면 updateLogFile 이 링크로 바꿈
+      files.length && files[0] ? files[0].getUrl() : "PDF 없음",
       d.dup ? "중복" : "", String(d.key || "").slice(0, 6)
     ]);
-  }, false);
+  }, true);
 }
 
 function getLogSheet() { return cachedSheet("log", getLogSheetFresh); }
@@ -1606,18 +1607,25 @@ function monitorData(cls, key) {
   if (String(key || "") !== want) return { error: "BAD_KEY" };
   const all = monitorAll();
   if (all.error) return all;
-  maybeRebuildOverview(OV_MONITOR_SEC);   // 현황 화면이 열려 있는 동안 총괄 탭도 1분마다 따라오게 (학생이 아니라 선생님 요청이 비용을 냄)
-  try {
-    const props = PropertiesService.getScriptProperties();
-    const at = Number(props.getProperty("pdfSweepAt") || 0);
-    if (Date.now() - at > 60000) { props.setProperty("pdfSweepAt", String(Date.now())); fillMissingPdfs(2, 180); }
-  } catch (e) { logError("빠진 PDF 채우기", e, ""); }
   return {
     ok: true, at: all.at, cls: cls || "", classes: all.classes, fo: all.fo !== false,
     students: cls ? all.students.filter((s) => s.c === cls) : all.students
   };
 }
 
+// 현황 화면이 1분마다 따로 부르는 일: 총괄 탭 다시 쓰기 + 빠진 PDF 2개까지 채우기.
+// 예전에는 3초마다 읽는 요청 안에서 했기 때문에, 그 요청이 10~30초 걸려 현황 화면이 1분마다 멈췄습니다(2026-10-21 부하 시험 최대 33초).
+function overviewTick(key) {
+  const want = teacherKey();
+  if (!want || String(key || "") !== want) return { error: "BAD_KEY" };
+  maybeRebuildOverview(OV_MONITOR_SEC);
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const at = Number(props.getProperty("pdfSweepAt") || 0);
+    if (Date.now() - at > 60000) { props.setProperty("pdfSweepAt", String(Date.now())); fillMissingPdfs(2, 180); }
+  } catch (e) { logError("빠진 PDF 채우기", e, ""); }
+  return { ok: true };
+}
 function monitorAll() {
   const cache = (function () { try { return CacheService.getScriptCache(); } catch (e) { return null; } })();
   if (cache) {

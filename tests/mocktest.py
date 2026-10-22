@@ -282,10 +282,16 @@ def check_server_file():
     check('제출을 받는 동안 총괄 시트를 직접 쓰지 않는다',
           'rebuildOverview' not in dopost,
           '제출이 몰릴 때 가장 무거운 작업이 겹쳐 실행 시간 제한을 넘긴다')
-    mon = gs[gs.index('function monitorData'):gs.index('function monitorAll')]
-    check('총괄 갱신이 자동으로 돈다 (자동 저장 + 선생님 현황 화면)',
-          dopost.count('maybeRebuildOverview(OV_SAVE_SEC)') == 1 and 'maybeRebuildOverview(OV_MONITOR_SEC)' in mon,
+    mon = gs[gs.index('function monitorData'):gs.index('function overviewTick')]
+    tick = gs[gs.index('function overviewTick'):gs.index('function monitorAll')]
+    check('총괄 갱신이 자동으로 돈다 (자동 저장 + 선생님 현황 화면의 따로 부르는 요청)',
+          dopost.count('maybeRebuildOverview(OV_SAVE_SEC)') == 1 and 'maybeRebuildOverview(OV_MONITOR_SEC)' in tick and 'teacherKey()' in tick,
           '제출 요청에서 갱신하면 그 학생이 십수 초를 기다린다(2026-10-21 부하 시험)')
+    check('현황 화면 3초 읽기는 총괄 갱신·PDF 채우기를 하지 않는다', 'maybeRebuildOverview' not in mon and 'fillMissingPdfs' not in mon,
+          '1분마다 그 요청이 10~30초 걸려 화면이 멈췄다')
+    check('현황 화면이 1분마다 따로 부른다', 'action: "ovtick"' in teacher_html and 'setInterval(ovTick, 60000)' in teacher_html)
+    check('최종 제출 요청은 제출명단을 쓰지 않는다(PDF 만들 때)', 'logRow(' not in dopost and 'logRow(d, [file])' in gs)
+    check('다시 제출하면 PDF 칸을 비워 새로 만든다', 'phase === "done" ? (pdfLink || "")' in gs and 'phase === "draftDone" ? (pdfLink || "")' in gs)
     check('제출 요청은 총괄 갱신을 기다리지 않는다', dopost.count('maybeRebuildOverview(') == 1)
     check('갱신 간격이 넉넉하다',
           re.search(r'OV_SAVE_SEC = (\d+)', gs) and int(re.search(r'OV_SAVE_SEC = (\d+)', gs).group(1)) >= 120,
