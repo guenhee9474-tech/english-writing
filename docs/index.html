@@ -524,7 +524,7 @@
    교사용 설정 (여기만 고치면 됩니다)
    ════════════════════════════════════════════════════════════════ */
 const CONFIG = {
-  version: "2026-10-22b (현황판 조작)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
+  version: "2026-10-23 (2회차 마감)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
   title: "Good for All of Us: A Place for Everyone",
   subtitle: "1학년 2학기 영어 쓰기 수행평가",
 
@@ -896,7 +896,7 @@ const ORDER = { research: 0, draft: 1, draftDone: 2, final: 3, done: 4 };
 const PHASE_LABEL = { research: "조사·브레인스토밍", draft: "초안 쓰기", draftDone: "1회차 완료", final: "최종 글쓰기", done: "제출 완료" };
 const urlQ = new URLSearchParams(location.search);
 const urlMin = { research: +urlQ.get("r") || 0, draft: +urlQ.get("d") || 0, final: +urlQ.get("f") || 0 };
-let finalOpen = true;          // 서버에서 closeFinal() 로 닫아 두면 false
+let finalOpen = true;          // 이 학생의 2회차가 열렸는지 (서버가 로그인 때 알려 줌. 선생님이 현황 화면에서 반·학생별로 엶)
 // 기기 열쇠: 첫 로그인 때 서버가 발급해 이 기기에만 보관. 이후 모든 요청에 붙는다.
 function getKey(sid) { try { return localStorage.getItem("czkey:" + sid) || ""; } catch (e) { return ""; } }
 function setKey(sid, key) { try { if (key) localStorage.setItem("czkey:" + sid, key); } catch (e) {} }
@@ -1363,7 +1363,7 @@ async function sendOnce(body) {
   } finally { if (timer) clearTimeout(timer); }
 }
 const OK_REPLY = { OK: 1, OK_SAVE: 1, OK_DRAFT: 1, OK_REOPEN: 1 };
-const BAD_REPLY = { NO_KEY: 1, UNKNOWN_KEY: 1, BAD_TOKEN: 1, BAD_PHASE: 1, ERROR: 1 };
+const BAD_REPLY = { NO_KEY: 1, UNKNOWN_KEY: 1, BAD_TOKEN: 1, BAD_PHASE: 1, ERROR: 1, CLOSED: 1 };
 
 function submitBody(phase, reason, kind) {
   const cfg = CONFIG.submit;
@@ -1461,7 +1461,8 @@ async function fetchRemote(sid, name, nameOk, rosterOk) {
   const srvPhase = String(r.phase || "");
   if (data && srvPhase && (ORDER[srvPhase] || 0) > (ORDER[data.phase] || 0)) data.phase = srvPhase;
   return { data, phase: srvPhase, dataBroken: !!(r.found && r.data && !data),
-           finalAt: r.finalAt || null, error: r.error || "", dup: !!r.dup, name: r.name || "", taken: !!r.taken };
+           finalAt: r.finalAt || null, error: r.error || "", dup: !!r.dup, name: r.name || "", taken: !!r.taken,
+           priorSubmitted: !!r.priorSubmitted };
 }
 
 // 작성 중 자동 저장 (서버). 바뀐 것이 있을 때만 보낸다.
@@ -1482,6 +1483,7 @@ async function autosaveToServer(force) {
     body.append("brainstorm", buildBrainstorm()); body.append("draft", buildDraft()); body.append("final", state.final);
     body.append("data", JSON.stringify(state));
     const reply = await sendToServer(body);
+    if (reply === "CLOSED") { finalOpen = false; clearInterval(autosaveTimer); showDone("draft"); toast("2회차가 닫혀 있습니다. 선생님이 열면 이어집니다.", 4000); return; }
     if (BAD_REPLY[reply]) { showBanner("선생님 서버가 저장을 받지 않고 있습니다(" + reply + "). 선생님께 알려 주세요.", true); saveVerified = true; return; }
     // 선생님이 현황 화면에서 "기존 기록 잇기"를 눌렀습니다. 이 화면(새로 시작한 글)은 버리고 다시 로그인해야 원래 글이 열립니다.
     if (reply === "TAKEN") { onTaken(); return; }
@@ -1711,7 +1713,7 @@ function showDone(kind) {
   $("doneTitle").textContent = isDraft ? "1회차 제출 완료" : "제출되었습니다";
   $("doneHint").textContent = isDraft
     ? (finalOpen ? "이 화면을 선생님께 보여 주세요. 다음에 같은 학번·이름으로 로그인하면 초안이 그대로 열리고 최종 글쓰기를 시작합니다."
-                 : "이 화면을 선생님께 보여 주세요. 최종 글쓰기(2회차)는 선생님이 열면 시작됩니다. 그때 같은 학번·이름으로 로그인하세요.")
+                 : "2회차(최종 글쓰기)는 선생님이 열면 시작됩니다. 수업 시간에 선생님이 열면 이 화면이 저절로 넘어갑니다. 화면을 닫았다면 그때 같은 학번·이름으로 다시 로그인하세요.")
     : "이 화면을 선생님께 보여 주세요. 화면을 닫아도 같은 학번으로 다시 열면 이 화면이 나타납니다.";
   $("copyBtn").textContent = isDraft ? "초안 복사" : "최종본 복사";
   const text = isDraft ? draftText() : state.final;
@@ -1905,6 +1907,12 @@ async function applyCmd(c) {
     teacherNote(by + "지금 제출"); submitNow("교사 지시 제출");
   } else if (c.cmd === "reopen" && (state.phase === "draftDone" || state.phase === "done")) {
     await doReopen(by); toast("선생님이 다시 열어 주셨습니다. 5분이 주어집니다.", 3500);
+  } else if (c.cmd === "openfinal") {
+    finalOpen = true;
+    if (state.phase === "draftDone" && !$("done").hidden) { teacherNote(by + "2회차 열림"); toast("선생님이 2회차를 여셨습니다. 최종 글쓰기를 시작합니다.", 4000); beginFinal(); }
+    else if (state.phase === "final" && !$("done").hidden) { teacherNote(by + "2회차 열림"); enterApp(); }
+  } else if (c.cmd === "closefinal") {
+    finalOpen = false;   // 쓰는 중인 학생을 내보내지는 않음 (다음 로그인부터 닫힘)
   } else if (c.cmd === "msg" && c.arg) {
     teacherNote(by + "메시지"); save(); markDirty();
     suppressLeaveUntil = Date.now() + 1500;
@@ -2095,6 +2103,16 @@ async function start() {
   $("startBtn").disabled = false; note.textContent = "";
   // 선생님이 "기존 기록 잇기"를 한 뒤의 첫 로그인: 이 기기에 남은 새 글은 버리고 서버의 원래 글을 씁니다.
   if (remote && remote.taken) local = null;
+  // 이미 초안 이상을 낸 학생이 새 기기(또는 지운 기록)로 들어옴: 처음부터 다시 쓰지 못하게 여기서 멈춤.
+  // 선생님이 현황 화면에서 '기존 기록 잇기'를 누르면 원래 글로 이어집니다.
+  if (remote && remote.priorSubmitted && !(remote.data && remote.data.startedAt)) {
+    note.textContent = "이미 제출한 기록이 있습니다. 손을 들어 선생님께 알려 주세요.";
+    note.className = "gate-note error";
+    await dialog({ title: "이미 제출한 기록이 있습니다",
+      text: "이 학번·이름으로 낸 글이 이미 있습니다. 새로 시작할 수 없습니다. 선생님께 알려 주세요. 선생님이 기존 기록을 이어 주면 다시 로그인하면 됩니다.",
+      buttons: [{ label: "확인", value: "ok", primary: true }] });
+    return;
+  }
 
   // 같은 학번이 이미 다른 기기에 등록되어 있으면: 막지 않고 따로 저장하되, 학생과 선생님이 알 수 있게 표시
   dupWarned = !!(remote && remote.dup);
@@ -2127,7 +2145,10 @@ async function start() {
   if (state.submitted || state.phase === "done") { showDone("final"); return; }
   // 지난 시간에 초안을 내지 못하고 화면을 닫은 학생(초안 시간이 끝난 지 오래됨): 초안을 내고 곧바로 최종 단계로.
   // (예전에는 로그인하자마자 초안이 제출되고 "1회차 완료"에서 멈춰, 한 번 더 로그인해야 했습니다.)
-  if (state.phase === "draft" && state.phaseStartedAt && remainingSec() <= 0 && Date.now() - state.phaseStartedAt > 3 * 3600 * 1000) {
+  // 조사 중에 나간 학생도 같음: 집에서 1차시를 이어 쓰지 못하게 그대로 초안으로 내고 마감(2회차는 선생님이 열어야 시작).
+  const stale1 = state.phaseStartedAt && Date.now() - state.phaseStartedAt > 3 * 3600 * 1000;
+  if ((state.phase === "draft" || state.phase === "research") && stale1) {
+    if (state.phase === "research") { setPhase("draft"); state.phaseLog.draftHow = "지난 시간 조사 중 나감"; }
     await submitDraft("지난 시간 미제출분, 다음 로그인 때 자동 제출");
     if (finalOpen) beginFinal();
     return;

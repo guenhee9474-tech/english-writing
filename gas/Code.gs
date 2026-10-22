@@ -160,6 +160,15 @@ function handlePost(e) {
     if (!row) return textOut("UNKNOWN_KEY");
     data.dup = String(sh0.getRange(row, COL.dup).getValue() || "") === "Y";
 
+    // 2회차가 닫힌 학생: 초안까지 낸 상태(draftDone)에서 2회차 글을 저장·제출하려 하면 받지 않음(집에서 쓰는 것 막기).
+    // 이미 수업 중에 2회차를 시작한 학생(서버 단계가 final)은 그 수업 동안 이어서 저장할 수 있게 둡니다.
+    if ((p.phase === "final" || (p.phase === "save" && phaseOf(p.data) === "final")) && !finalOpenFor(data.sid)) {
+      const prev0 = String(sh0.getRange(row, COL.phase).getValue() || "");
+      if (prev0 === "draftDone" || prev0 === "draft" || prev0 === "research") {
+        logError("닫힌 2회차에 저장 시도", new Error("학번 " + data.sid + " (" + p.phase + ")"), "받지 않음");
+        return textOut("CLOSED");
+      }
+    }
     if (p.phase === "save") {                          // 작성 중 자동 저장: 상태 + 읽을 수 있는 텍스트
       // 선생님이 "기존 기록 잇기"를 한 뒤, 다시 로그인하기 전의 화면이 보내는 저장은 받지 않습니다.
       // 받으면 새로 시작한 빈 글이 이어 붙인 원래 글을 덮어씁니다.
@@ -193,8 +202,8 @@ function handlePost(e) {
     }
     if (p.phase !== "final") return textOut("BAD_PHASE");   // 모르는 단계 값을 최종 제출로 처리하지 않는다
 
-    // 최종 단계를 닫아 둔 상태에서 들어온 제출도 받습니다(학생 글을 버리는 것이 더 나쁩니다). 대신 오류 탭에 남겨 둡니다.
-    if (!isFinalOpen()) logError("최종 닫힘 상태에서 최종 제출", new Error("closeFinal 중 제출됨"), data.sid + " " + data.name);
+    // 수업 중에 2회차를 시작한 학생의 제출은 시간이 지나 닫혔어도 받습니다(글을 버리는 것이 더 나쁨). 오류 탭에 남겨 둡니다.
+    if (!finalOpenFor(data.sid)) logError("닫힌 뒤 들어온 최종 제출", new Error("학번 " + data.sid), "받음(이미 2회차 시작한 학생)");
 
     // 같은 제출이 다시 왔으면(학생 화면이 확인을 못 해 다시 보냄) 명단에 또 적지 않습니다.
     if (st.phase === "done" && recentAt(st.finalAt)) return okWith("OK");
@@ -221,7 +230,7 @@ function doGet(e) {
   const p = (e && e.parameter) || {};
   const cb = p.callback;
   // 그냥 주소만 열어 본 경우 (사람이 확인용으로 열었을 때)
-  if (!cb && !p.action) return textOut("작성 페이지의 제출을 받는 주소입니다. 정상 작동 중. 최종 단계: " + (isFinalOpen() ? "열림" : "닫힘"));
+  if (!cb && !p.action) return textOut("작성 페이지의 제출을 받는 주소입니다. 정상 작동 중. 2회차: " + ({ all: "모두 열림", none: "모두 닫힘" }[finalMode()] || "반별"));
   let out = {};
   try { out = retryTransient(function () { return getAction(p); }); }
   catch (err) { out = { error: String(err) }; }
@@ -244,13 +253,13 @@ function getAction(p) {
     else if (CFG.token && p.token !== CFG.token) out = { error: "BAD_TOKEN" };
     else if (p.action === "load") {                 // 로그인: 열쇠 확인·발급 + 저장된 상태 + 최종 제출 여부 + 최종 단계 열림 여부
       out = loadOrRegister(p.sid, p.name, p.key, p.nameOk === "1", String(p.rid || "").slice(0, 40), p.rosterOk === "1");
-      out.finalOpen = isFinalOpen();
+      out.finalOpen = finalOpenFor(String(p.sid || "").trim());
       if (out.finalAt === undefined) out.finalAt = null;
     }
     else if (p.action === "dict") out = dictLookup(p);
     else if (p.action === "check") out = checkStatus(p.sid, p.key);
     else if (p.action === "cmd") out = studentCommands(p.sid);                     // 학생 화면이 20초마다 가져감 (시트를 열지 않음)
-    else if (p.action === "session") out = { session: 1, finalOpen: isFinalOpen() };
+    else if (p.action === "session") out = { session: 1, finalOpen: finalOpenFor(String(p.sid || "")) };
     else out = { ok: true };
   }
   return out;
@@ -582,9 +591,34 @@ function dictSheet() {
 
 /* ────────────────────────── 최종 단계 열고 닫기 ────────────────────────── */
 
-function isFinalOpen() { return PropertiesService.getScriptProperties().getProperty("finalOpen") !== "0"; }
-function openFinal()  { PropertiesService.getScriptProperties().setProperty("finalOpen", "1"); Logger.log("최종 단계 열림"); }
-function closeFinal() { PropertiesService.getScriptProperties().setProperty("finalOpen", "0"); Logger.log("최종 단계 닫힘 (초안 제출까지만 가능)"); }
+/* ── 2회차(최종 글쓰기) 열기·마감 (2026-10-23 교사 결정) ──
+   초안을 낸 학생은 2회차가 '마감' 상태로 기다립니다. 선생님이 현황 화면에서 반(또는 학생)을 열면 그때부터 FINAL_OPEN_HOURS 시간 동안만 열립니다.
+   그래서 아이패드를 집에 가져가 다시 들어와도 2회차를 쓰거나 낼 수 없습니다.
+   편집기용 예비 스위치: openFinal() = 모두 열기(시간 제한 없음), closeFinal() = 모두 닫기(반을 열어도 닫힘), autoFinal() = 기본(반별 열기)으로. */
+const FINAL_OPEN_HOURS = 3;
+function finalMode() { return PropertiesService.getScriptProperties().getProperty("finalMode") || ""; }   // "" 반별 / "all" 모두 열기 / "none" 모두 닫기
+function isFinalOpen() { return finalMode() !== "none"; }   // 전체 스위치가 '모두 닫기'가 아닌지 (현황 화면 빨간 띠용)
+function openMap() { try { return JSON.parse(PropertiesService.getScriptProperties().getProperty("finalOpenMap") || "{}"); } catch (e) { return {}; } }
+function finalOpenFor(sid) {
+  const mode = finalMode();
+  if (mode === "all") return true;
+  if (mode === "none") return false;
+  const m = openMap(), now = Date.now();
+  return (m["s:" + sid] || 0) > now || (m["c:" + classOf(String(sid))] || 0) > now;
+}
+function setFinalOpen(target, open) {   // target: "c:1학년 3반" 또는 "s:10315"
+  const props = PropertiesService.getScriptProperties();
+  return withLock(10000, "2회차 열기", function () {
+    const m = openMap(), now = Date.now();
+    Object.keys(m).forEach((k) => { if (m[k] <= now) delete m[k]; });   // 지난 것 정리
+    if (open) m[target] = now + FINAL_OPEN_HOURS * 3600 * 1000; else delete m[target];
+    props.setProperty("finalOpenMap", JSON.stringify(m));
+    return m[target] || 0;
+  }, true);
+}
+function openFinal()  { PropertiesService.getScriptProperties().setProperty("finalMode", "all"); Logger.log("2회차: 모두 열림 (시간 제한 없음). 되돌리려면 autoFinal()"); }
+function closeFinal() { PropertiesService.getScriptProperties().setProperty("finalMode", "none"); Logger.log("2회차: 모두 닫힘. 되돌리려면 autoFinal()"); }
+function autoFinal()  { PropertiesService.getScriptProperties().deleteProperty("finalMode"); Logger.log("2회차: 기본(현황 화면에서 반별로 열기)"); }
 function phaseOf(json) { try { return String(JSON.parse(json).phase || ""); } catch (e) { return ""; } }
 
 /* ────────────────────────── 초안 보관 (1회차) ────────────────────────── */
@@ -712,11 +746,19 @@ function loadOrRegister(sid, name, key, nameOk, rid, rosterOk) {
   };
   const ids0 = idRows(sh);
   const canTransfer = ids0.some((row) => String(row[COL.sid - 1]) === String(sid) && !String(row[COL.key - 1] || ""));
+  // 같은 학번·이름으로 이미 초안 이상을 낸 줄이 있으면 '이미 제출함'으로 알림 (새 기기로 처음부터 다시 쓰는 것 막기)
+  let priorSubmitted = false;
+  if (ids0.some((row) => String(row[COL.sid - 1]) === String(sid))) {
+    const ph = sh.getRange(2, COL.phase, Math.max(1, sh.getLastRow() - 1), 1).getValues();
+    const dupc = sh.getRange(2, COL.dup, Math.max(1, sh.getLastRow() - 1), 1).getValues();
+    priorSubmitted = ids0.some((row, i) => String(row[COL.sid - 1]) === String(sid) && nameKey(row[COL.name - 1]) === nameKey(name)
+      && String((dupc[i] || [""])[0]) !== "이어받음" && (PHASE_ORDER[String((ph[i] || [""])[0])] || 0) >= PHASE_ORDER.draftDone);
+  }
   // 같은 로그인 시도가 다시 왔으면(학생 화면이 응답을 못 받고 다시 보냄) 새 줄을 또 만들지 않고 아까 만든 열쇠를 돌려줍니다.
   const cache = CacheService.getScriptCache();
   if (rid) {
     const prevKey = cache.get("rid:" + rid);
-    if (prevKey) return { found: false, key: prevKey, name: name, dup: false, nameMismatch: false, again: true };
+    if (prevKey) return { found: false, key: prevKey, name: name, dup: false, nameMismatch: false, again: true, priorSubmitted: priorSubmitted };
   }
   if (!canTransfer) {                            // 대부분: 새 줄을 끝에 붙이기만
     const fresh0 = newKey();
@@ -728,7 +770,7 @@ function loadOrRegister(sid, name, key, nameOk, rid, rosterOk) {
     }, true);
     if (rid) { try { cache.put("rid:" + rid, fresh0, 900); } catch (e) {} }
     noteRoster(fresh0);
-    return { found: false, key: fresh0, name: name, dup: exists0, nameMismatch: false };
+    return { found: false, key: fresh0, name: name, dup: exists0, nameMismatch: false, priorSubmitted: priorSubmitted };
   }
   return withLock(30000, "로그인 " + sid, function () {
     // 열쇠 칸이 빈 같은 학번 줄(선생님이 열쇠를 지운 줄)을 이어받습니다. 두 기기가 같은 줄을 잡지 않도록 잠금 안에서.
@@ -754,7 +796,7 @@ function loadOrRegister(sid, name, key, nameOk, rid, rosterOk) {
     sh.appendRow([sid, name, fresh, new Date(), new Date(), "research", "", "", "", "", "", "", exists ? "Y" : "", "", "", ""]);
     noteRoster(fresh);
     if (nameBlocked) logError("이름이 달라 새 줄로 등록", new Error("학번 " + sid + ": 시트에는 \"" + nameBlocked + "\", 입력은 \"" + name + "\""), "기존 줄은 그대로 두었습니다");
-    return { found: false, key: fresh, name: name, dup: exists, nameMismatch: !!nameBlocked };
+    return { found: false, key: fresh, name: name, dup: exists, nameMismatch: !!nameBlocked, priorSubmitted: priorSubmitted };
   }, true);
 }
 
@@ -1610,7 +1652,8 @@ function monitorData(cls, key) {
   const all = monitorAll();
   if (all.error) return all;
   return {
-    ok: true, at: all.at, cls: cls || "", classes: all.classes, fo: all.fo !== false,
+    ok: true, at: all.at, cls: cls || "", classes: all.classes, fo: all.fo !== false, fmode: all.fmode || "",
+    openCls: all.openCls || {}, openSid: all.openSid || {},
     students: cls ? all.students.filter((s) => s.c === cls) : all.students
   };
 }
@@ -1633,7 +1676,7 @@ function overviewTick(key) {
    학생 화면이 20초마다 가져가 적용합니다. 가져가기는 캐시만 읽어 가볍습니다(시트·잠금 없음).
    조작 종류: add5(5분 더), unlock(잠금 풀고 5분), todraft(초안 단계로), submit(지금 제출), reopen(제출 취소), msg(메시지).
    학생 화면은 적용한 조작 번호를 기억해 같은 조작을 두 번 하지 않고, 자동집계 '교사조작'에 남깁니다. */
-const TCMDS = { add5: 1, unlock: 1, todraft: 1, submit: 1, reopen: 1, msg: 1 };
+const TCMDS = { add5: 1, unlock: 1, todraft: 1, submit: 1, reopen: 1, msg: 1, openfinal: 1, closefinal: 1 };
 function teacherCommand(p) {
   const want = teacherKey();
   if (!want || String(p.k || "") !== want) return { error: "BAD_KEY" };
@@ -1641,11 +1684,19 @@ function teacherCommand(p) {
   if (!TCMDS[cmd]) return { error: "BAD_CMD" };
   const arg = cmd === "msg" ? String(p.arg || "").trim().slice(0, 300) : "";
   if (cmd === "msg" && !arg) return { error: "NO_TEXT" };
+  if (cmd === "openfinal" || cmd === "closefinal") {   // 2회차 열기·닫기: 반 또는 학생 단위로 서버에 기록 + 기다리는 학생 화면에 알림
+    if (!p.cls && !/^\d{3,}$/.test(String(p.sid || ""))) return { error: "NO_TARGET" };
+    const until = setFinalOpen(p.cls ? "c:" + p.cls : "s:" + p.sid, cmd === "openfinal");
+    try { CacheService.getScriptCache().remove("mon_all"); } catch (e) {}
+    logError("현황판 조작 기록", new Error(cmd + " · " + (p.cls || p.sid)), until ? "열림 " + Utilities.formatDate(new Date(until), "Asia/Seoul", "HH:mm") + "까지" : "닫힘");
+    if (cmd === "closefinal") return { ok: true, n: 0, until: 0 };
+  }
   let sids = [];
   if (p.cls) {   // 반 전체: 지금 들어와 있는 학생만 (조작에 맞는 단계인지는 학생 화면이 다시 확인)
     const all = monitorAll();
     if (all.error) return all;
     sids = all.students.filter((s) => s.c === String(p.cls) && s.ph && s.ph !== "done").map((s) => s.sid);
+    if (cmd === "openfinal" && !sids.length) return { ok: true, n: 0 };   // 아직 아무도 안 들어왔어도 반은 열림
   } else if (/^\d{3,}$/.test(String(p.sid || ""))) {
     sids = [String(p.sid)];
   }
@@ -1662,7 +1713,7 @@ function teacherCommand(p) {
     put["cmd:" + x] = JSON.stringify(list.slice(-20));
   });
   cache.putAll(put, 21600);
-  logError("현황판 조작 기록", new Error(cmd + (p.cls ? " · " + p.cls + " " + uniq.length + "명" : " · " + uniq[0])), arg ? "메시지 " + arg.length + "자" : "");
+  if (cmd !== "openfinal") logError("현황판 조작 기록", new Error(cmd + (p.cls ? " · " + p.cls + " " + uniq.length + "명" : " · " + uniq[0])), arg ? "메시지 " + arg.length + "자" : "");
   return { ok: true, n: uniq.length };
 }
 function studentCommands(sid) {
@@ -1729,6 +1780,10 @@ function readMonitorRows() {
       }
     }
     out.fo = isFinalOpen();          // closeFinal 로 닫혀 있으면 현황 화면 위에 크게 알립니다
+    out.fmode = finalMode();
+    const om = openMap(), nowm = Date.now();
+    out.openCls = {}; out.openSid = {};
+    Object.keys(om).forEach((k) => { if (om[k] > nowm) (k.indexOf("c:") === 0 ? out.openCls : out.openSid)[k.slice(2)] = om[k]; });
     // "명단" 탭이 있으면 아직 한 번도 안 들어온 학생도 보여 줍니다 (누가 안 들어왔는지가 제일 급하므로)
     const ss = logBook();
     const rs = ss.getSheetByName((CFG.overview || {}).rosterName || "명단");
@@ -1775,7 +1830,7 @@ function diagnose() {
     const ovAt = Number(PropertiesService.getScriptProperties().getProperty("ovAt") || 0);
     out.push("총괄 마지막 갱신: " + (ovAt ? Utilities.formatDate(new Date(ovAt), "Asia/Seoul", "MM-dd HH:mm:ss") : "(없음)"));
     out.push("선생님 화면 열쇠: " + (teacherKey() ? "설정됨" : "없음 → newTeacherKey() 실행 필요"));
-    out.push("최종 단계: " + (isFinalOpen() ? "열림" : "닫힘"));
+    out.push("2회차: " + ({ all: "모두 열림", none: "모두 닫힘" }[finalMode()] || "반별") + " · 열린 곳 " + JSON.stringify(openMap()));
     const es = ss.getSheetByName("오류");
     if (es && es.getLastRow() >= 2) {
       const n = Math.min(8, es.getLastRow() - 1);

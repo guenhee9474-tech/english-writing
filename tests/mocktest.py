@@ -48,6 +48,12 @@ TKEY = 'teacher-key-for-test'
 ROSTER = {}      # "명단" 탭 흉내. 비어 있으면 누구나 등록
 BUSY = {'n': 0}  # 남은 "동시 실행 너무 많음" 응답 수
 CMDS = {}        # 현황판 조작: 학번 -> [조작]
+FINAL = {'default': True}   # 2회차 기본 열림 (예전 시험들용). T22 에서 실제처럼 닫힘으로 바꿈
+OPEN = {}        # 'c:1학년 3반' / 's:10315' -> 열림 끝 시각(ms)
+def cls_of(sid): return sid[0] + '학년 ' + str(int(sid[1:3])) + '반'
+def final_open_for(sid):
+    now = time.time() * 1000
+    return FINAL['default'] or OPEN.get('s:' + sid, 0) > now or OPEN.get('c:' + cls_of(sid), 0) > now
 
 CORS = {'Access-Control-Allow-Origin': '*'}
 # 읽기를 어떤 방식으로 했는지 센다. 새 방식(쿠키 없는 fetch)이 실제로 쓰여야 한다.
@@ -110,6 +116,9 @@ def mock(route):
             route.fulfill(status=200, headers=CORS, body='UNKNOWN_KEY'); return
         if DROP.get(ph):                     # 이 제출은 서버에서 잃어버린 것으로 흉내 낸다
             route.fulfill(status=200, headers=CORS, body='ERROR'); return
+        dphase = json.loads(g('data') or '{}').get('phase', '') if g('data') else ''
+        if (ph == 'final' or (ph == 'save' and dphase == 'final')) and not final_open_for(g('sid')) and r['phase'] in ('research', 'draft', 'draftDone'):
+            route.fulfill(status=200, headers=CORS, body='CLOSED'); return
         if ph == 'save':
             if g('key') in TAKEN:
                 route.fulfill(status=200, headers=CORS, body='TAKEN'); return
@@ -152,11 +161,16 @@ def mock(route):
         if g('k') != TKEY:
             out = {'error': 'BAD_KEY'}
         else:
+            if g('cmd') in ('openfinal', 'closefinal'):
+                tk = ('c:' + g('cls')) if g('cls') else ('s:' + sid)
+                if g('cmd') == 'openfinal': OPEN[tk] = time.time() * 1000 + 3 * 3600 * 1000
+                else: OPEN.pop(tk, None)
             targets = [x['sid'] for x in monitor(TKEY)['students'] if x['c'] == g('cls') and x['ph'] and x['ph'] != 'done'] if g('cls') else [sid]
+            if g('cmd') == 'closefinal': targets = []
             item = {'id': uuid.uuid4().hex[:8], 'cmd': g('cmd'), 'arg': g('arg'), 't': int(time.time() * 1000)}
             for t in dict.fromkeys(targets):
                 CMDS.setdefault(t, []).append(item)
-            out = {'ok': True, 'n': len(dict.fromkeys(targets))} if targets else {'error': 'NO_TARGET'}
+            out = {'ok': True, 'n': len(dict.fromkeys(targets))} if targets or g('cmd') in ('openfinal', 'closefinal') else {'error': 'NO_TARGET'}
     elif g('token') != TOKEN:
         out = {'error': 'BAD_TOKEN'}
     elif action == 'load':
@@ -187,12 +201,13 @@ def mock(route):
                        'dup': take['dup'], 'phase': take['phase'], 'at': take['at'], 'transferred': True}
             else:
                 dup = any(x['sid'] == sid for x in rows)
+                prior = any(x['sid'] == sid and norm(x['name']) == norm(name) and x['dup'] != '이어받음' and ORDER.get(x['phase'], 0) >= ORDER['draftDone'] for x in rows)
                 r2 = add_row(sid, name, k, dup)
                 if ROSTER and (sid not in ROSTER or norm(ROSTER[sid]) != norm(name)):
                     r2['rm'] = '명단에 없는 학번' if sid not in ROSTER else '명단의 이름과 다름'
                 out = {'found': False, 'key': k, 'name': name, 'dup': dup, 'phase': 'research',
-                       'nameMismatch': blocked}
-        out['finalOpen'] = True
+                       'nameMismatch': blocked, 'priorSubmitted': prior}
+        out['finalOpen'] = final_open_for(sid)
         rr = find(sid, out.get('key') or '')
         out['finalAt'] = rr['finalAt'] if rr and rr['phase'] == 'done' else None
     elif action == 'cmd':
@@ -246,7 +261,10 @@ def monitor(k):
             if o:
                 x['kp'] = r['key'][:6]; x['op'] = o['phase']
         st.append(x)
-    return {'ok': True, 'at': int(time.time() * 1000), 'classes': sorted({x['c'] for x in st}), 'students': st, 'fo': True}
+    now = time.time() * 1000
+    return {'ok': True, 'at': int(now), 'classes': sorted({x['c'] for x in st}), 'students': st, 'fo': True, 'fmode': '',
+            'openCls': {k[2:]: v for k, v in OPEN.items() if k.startswith('c:') and v > now},
+            'openSid': {k[2:]: v for k, v in OPEN.items() if k.startswith('s:') and v > now}}
 
 def takeover(k, sid, kp):
     """gas/Code.gs 의 takeover 와 같은 규칙."""
@@ -744,10 +762,10 @@ with sync_playwright() as p:
     to_final(H, '10202', '한지우', 'Original draft line for takeover.')
     ctxH.close()                                         # 원래 아이패드는 더 이상 없음 (열쇠 분실)
     ctxI, I = new_page(b); login(I, '10202', '한지우')
-    check('새 기기는 중복 줄로 시작한다', sum(1 for r in rows if r['sid'] == '10202') == 2)
-    ban = I.inner_text('#banner') if not I.eval_on_selector('#banner', 'e=>e.hidden') else ''
-    check('학생에게 선생님께 알리라고 한다', '선생님' in ban, ban[:60])
-    I.click('[data-step2="0"]'); I.keyboard.type('new device text'); I.wait_for_timeout(1500)
+    check('새 기기는 중복 줄이 생긴다', sum(1 for r in rows if r['sid'] == '10202') == 2)
+    check('이미 초안을 낸 학생은 새 기기에서 처음부터 시작하지 못함', '이미 제출한 기록' in I.inner_text('#dlgTitle') and I.eval_on_selector('#app', 'e=>e.hidden'),
+          I.inner_text('#dlgTitle'))
+    I.click('#dlgActions button:has-text("확인")'); I.wait_for_timeout(300)
     ctxT = b.new_context(viewport={'width': 1280, 'height': 900}); T = ctxT.new_page()
     T.route(SCRIPT + '*', mock)
     T.on('dialog', lambda d: d.accept())
@@ -762,15 +780,11 @@ with sync_playwright() as p:
     check('원래 줄이 새 기기 열쇠로 이어진다', orig['key'] == keyI)
     check('현황 화면에서 빈 중복 카드가 사라진다', T.query_selector('.take[data-sid="10202"]') is None)
     ctxT.close()
-    I.click('[data-step2="0"]'); I.keyboard.type(' more'); I.wait_for_timeout(2000)
-    check('옛 화면의 저장이 원래 글을 덮지 않는다', 'Original draft line for takeover' in (orig['data'] or '') and 'new device text' not in (orig['data'] or ''))
-    check('학생 화면에 다시 로그인 안내가 뜬다', '연결' in I.inner_text('#dlgTitle'), I.inner_text('#dlgTitle'))
-    I.click('#dlgActions button:has-text("확인")'); I.wait_for_timeout(1500)
-    check('학번·이름이 미리 채워진다', I.eval_on_selector('#sid', 'e=>e.value') == '10202')
+    check('원래 글은 그대로', 'Original draft line for takeover' in (orig['data'] or ''))
     I.click('#startBtn'); I.wait_for_timeout(1500)
     check('원래 단계(최종 글쓰기)로 열린다', I.inner_text('#phaseLabel') == '최종 글쓰기', I.inner_text('#phaseLabel'))
     check('원래 초안이 보인다', 'Original draft line' in I.eval_on_selector('[data-part="0"][data-line="0"]', 'e=>e.value'))
-    check('다시 로그인한 뒤에는 저장을 받는다', '10202' not in str(TAKEN) and keyI not in TAKEN)
+    check('다시 로그인한 뒤에는 저장을 받는다', keyI not in TAKEN)
 
     # ── T15. 같은 아이패드를 다른 학생이 쓸 때 앞 학생 학번을 쳐도 글이 열리지 않는다 ──
     print('T15 공용 아이패드에서 남의 글이 열리지 않는다')
@@ -939,6 +953,56 @@ with sync_playwright() as p:
     check('학생 기록에 현황판 조작이 남음', bool(lastS) and '현황판: 5분 추가' in lastS[-1]['meta'] and '현황판: 제출 취소' in lastS[-1]['meta'], lastS[-1]['meta'][-120:] if lastS else '')
     check('같은 조작을 두 번 적용하지 않음', Sx.evaluate("state.tlog.filter(x => x.a === '현황판: 5분 추가').length") == 2)
     for c_ in (ctxS, ctxS2, ctxT2): c_.close()
+
+    # ── T22. 2회차 마감: 초안을 낸 학생은 선생님이 열 때까지 2회차를 못 함, 연 뒤 3시간만 ──
+    print('T22 2회차 마감과 열기')
+    FINAL['default'] = False
+    def to_draftdone(pg, sid, name):
+        pg.goto('http://127.0.0.1:8880/index.html?as=1&cp=1'); pg.fill('#sid', sid); pg.fill('#name', name); pg.click('#startBtn'); pg.wait_for_timeout(1300)
+        start_draft(pg); type_line(pg, 0, 0, 'Draft by ' + name + '.'); pg.wait_for_timeout(300)
+        pg.click('#submitBtn'); pg.wait_for_selector('#modal:not([hidden])'); pg.click('#modalOk'); pg.wait_for_selector('#done:not([hidden])'); pg.wait_for_timeout(1000)
+    ctxZ, Z = new_page(b); to_draftdone(Z, '10301', '마감하나')
+    check('초안 제출 화면: 선생님이 열면 시작된다는 안내', '선생님이 열면' in Z.inner_text('#doneHint'), Z.inner_text('#doneHint')[:40])
+    Z.goto('http://127.0.0.1:8880/index.html?as=1&cp=1'); Z.fill('#sid', '10301'); Z.fill('#name', '마감하나'); Z.click('#startBtn'); Z.wait_for_timeout(1500)
+    check('집에서 다시 들어와도 2회차가 열리지 않음', not Z.eval_on_selector('#done', 'e=>e.hidden') and Z.eval_on_selector('#app', 'e=>e.hidden'), Z.evaluate('state.phase'))
+    rz = next(r for r in rows if r['sid'] == '10301' and r['name'] == '마감하나')
+    Z.evaluate("() => { state.phase = 'final'; }")
+    code = Z.evaluate("async () => (await sendToServer(submitBody('final', 'x', 'final'))).split('\\n')[0]")
+    check('서버도 닫힌 2회차 제출을 받지 않음', code == 'CLOSED' and rz['phase'] == 'draftDone', code)
+    Z.evaluate("() => { state.phase = 'draftDone'; }")
+    ctxY, Y = new_page(b); to_draftdone(Y, '10302', '마감둘')
+    ctxT3 = b.new_context(viewport={'width': 1280, 'height': 900}); T3 = ctxT3.new_page()
+    T3.route(SCRIPT + '*', mock); T3.on('dialog', lambda d: d.accept())
+    T3.goto('http://127.0.0.1:8880/teacher.html#k=' + TKEY); T3.wait_for_selector('.card', timeout=15000)
+    tab = T3.query_selector('.tabs button[data-c="1학년 3반"]')
+    if tab: tab.click(); T3.wait_for_timeout(1500)
+    check('현황 막대: 2회차 닫힘', '닫힘' in T3.inner_text('#bar'), T3.inner_text('#bar')[:80])
+    T3.click('.card[data-sid="10302"]', button='right'); T3.wait_for_selector('#cmenu:not([hidden])')
+    T3.click('#cmenu button:has-text("이 학생 2회차 열기")'); T3.wait_for_timeout(1500)
+    Y.wait_for_timeout(2500)
+    check('학생 한 명만 열기: 그 학생은 저절로 최종 글쓰기로', Y.inner_text('#phaseLabel') == '최종 글쓰기' and not Y.eval_on_selector('#app', 'e=>e.hidden'), Y.evaluate('state.phase'))
+    check('다른 학생은 여전히 닫힘', Z.eval_on_selector('#app', 'e=>e.hidden'))
+    T3.click('#classMenu'); T3.wait_for_selector('#cmenu:not([hidden])')
+    T3.click('#cmenu button:has-text("2회차 열기")'); T3.wait_for_timeout(2000)
+    Z.wait_for_timeout(2500)
+    check('반 전체 열기: 기다리던 학생 화면이 저절로 최종 글쓰기로', Z.inner_text('#phaseLabel') == '최종 글쓰기' and not Z.eval_on_selector('#app', 'e=>e.hidden'), Z.evaluate('state.phase'))
+    check('현황 막대: 2회차 열림 ~시각', '열림 ~' in T3.inner_text('#bar'), T3.inner_text('#bar')[:80])
+    T3.click('#classMenu'); T3.wait_for_selector('#cmenu:not([hidden])')
+    T3.click('#cmenu button:has-text("2회차 닫기")'); T3.wait_for_timeout(1500)
+    check('반 닫기: 서버 기록에서 빠짐', 'c:1학년 3반' not in OPEN)
+    # 조사 중에 나간 학생이 몇 시간 뒤 들어옴 → 그대로 초안으로 내고 마감
+    ctxW, W = new_page(b)
+    W.goto('http://127.0.0.1:8880/index.html?as=1&cp=1'); W.fill('#sid', '10303'); W.fill('#name', '마감셋'); W.click('#startBtn'); W.wait_for_timeout(1300)
+    W.click('[data-step2="0"]'); W.keyboard.type('only research'); W.wait_for_timeout(1500)
+    W.goto('http://127.0.0.1:8880/index.html?as=1&cp=1'); W.wait_for_timeout(300)
+    W.evaluate("""() => { const k = Object.keys(localStorage).find(x => x.startsWith('cz1:') && x.endsWith('10303'));
+        const st = JSON.parse(localStorage.getItem(k)); st.phaseStartedAt = Date.now() - 4 * 3600 * 1000; localStorage.setItem(k, JSON.stringify(st)); }""")
+    rw = next(r for r in rows if r['sid'] == '10303')
+    _d = json.loads(rw['data']); _d['phaseStartedAt'] = int(time.time() * 1000) - 4 * 3600 * 1000; rw['data'] = json.dumps(_d)
+    W.fill('#sid', '10303'); W.fill('#name', '마감셋'); W.click('#startBtn'); W.wait_for_timeout(2500)
+    check('조사 중 나간 학생: 다시 들어오면 초안으로 내고 마감', rw['phase'] == 'draftDone' and W.eval_on_selector('#app', 'e=>e.hidden'), rw['phase'])
+    for c_ in (ctxZ, ctxY, ctxT3, ctxW): c_.close()
+    FINAL['default'] = True
 
     # ── 마무리 ──
     print('마무리')

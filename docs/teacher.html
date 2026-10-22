@@ -119,7 +119,7 @@
   <div class="tabs" id="tabs"></div>
 </header>
 
-<div class="closed" id="closed" hidden>최종 글쓰기(2회차)가 닫혀 있습니다. 학생이 로그인해도 최종 단계가 열리지 않습니다. 열려면 Apps Script 편집기에서 openFinal 을 실행하세요.</div>
+<div class="closed" id="closed" hidden>2회차가 '모두 닫힘'으로 되어 있어 반을 열어도 시작되지 않습니다. Apps Script 편집기에서 autoFinal 을 실행하면 반별 열기로 돌아갑니다.</div>
 <div class="bar" id="bar" hidden></div>
 <div class="cmenu" id="cmenu" hidden role="menu"></div>
 <div class="tnote" id="tnote" hidden role="status"></div>
@@ -237,8 +237,9 @@ function render(d) {
     '<div class="' + (leaved.length ? "warnbox" : "") + '">이탈<b>' + leaved.length + "명</b></div>" +
     (quietN ? '<div class="warnbox">조용함<b>' + quietN + "명</b></div>" : "") +
     (rosterN ? '<div class="warnbox">명단 확인<b>' + rosterN + "명</b></div>" : "") +
+    finalBadge(d) +
     '<div class="sp">' +
-      '<button id="classMenu" title="이 반 학생 모두에게">반 전체 ▾</button>' +
+      '<button id="classMenu" title="이 반 학생 모두에게 (2회차 열기·닫기 포함)">반 전체 ▾</button>' +
       '<button data-s="sid" class="' + (sortBy === "sid" ? "on" : "") + '">학번 순</button>' +
       '<button data-s="leave" class="' + (sortBy === "leave" ? "on" : "") + '">이탈 많은 순</button>' +
     "</div>";
@@ -264,6 +265,7 @@ function render(d) {
     if (s.bs > 0) flags.push("대량 " + s.bs);
     if (s.dup) flags.push("중복");
     if (s.rm) flags.push("명단 확인: " + s.rm);
+    if (s.ph === "draftDone" && ((lastData && lastData.openSid) || {})[s.sid] > Date.now()) flags.push("2회차 열림");
     let sub = "";
     if (!s.ph) sub = "아직 안 들어옴";
     else if (s.ph === "done") sub = "제출 " + clock(s.fn);
@@ -284,21 +286,24 @@ function render(d) {
 
 /* ── 학생 조작 (카드 오른쪽 클릭 또는 ⋯) ──
    고른 조작은 서버에 잠깐 맡겨 두고, 학생 화면이 20초 안에 가져가 적용합니다. 선생님 열쇠가 있어야 보낼 수 있습니다. */
-const CMD_LABEL = { add5: "5분 더 주기", unlock: "잠금 풀고 5분 주기", todraft: "초안 쓰기 단계로 넘기기", submit: "지금 제출시키기", reopen: "제출 취소 (다시 열고 5분)", msg: "메시지 보내기" };
+const CMD_LABEL = { add5: "5분 더 주기", unlock: "잠금 풀고 5분 주기", todraft: "초안 쓰기 단계로 넘기기", submit: "지금 제출시키기", reopen: "제출 취소 (다시 열고 5분)", msg: "메시지 보내기",
+                    openfinal: "2회차 열기 (3시간)", closefinal: "2회차 닫기" };
 function cmdsFor(ph) {
   if (ph === "research") return ["add5", "todraft", "msg"];
   if (ph === "draft" || ph === "final") return ["add5", "unlock", "submit", "msg"];
-  if (ph === "draftDone" || ph === "done") return ["reopen", "msg"];
+  if (ph === "draftDone") return ["openfinal", "reopen", "msg"];
+  if (ph === "done") return ["reopen", "msg"];
   return [];
 }
 let menuTarget = null;
 function openMenu(target, x, y) {
   const m = $("cmenu");
-  const list = target.cls ? ["add5", "todraft", "msg"] : cmdsFor(target.ph);
+  const list = target.cls ? ["openfinal", "closefinal", "add5", "todraft", "msg"] : cmdsFor(target.ph);
   if (!list.length) return;
   menuTarget = target;
   m.innerHTML = '<div class="who">' + esc(target.cls ? target.cls + " 전체 (들어와 있는 학생)" : target.sid + " " + target.nm + " · " + (LABEL[target.ph] || "")) + "</div>" +
-    list.map((c) => '<button role="menuitem" data-cmd="' + c + '"' + (c === "submit" || c === "reopen" ? ' class="danger"' : "") + ">" + CMD_LABEL[c] + "</button>").join("");
+    list.map((c) => '<button role="menuitem" data-cmd="' + c + '"' + (c === "submit" || c === "reopen" || c === "closefinal" ? ' class="danger"' : "") + ">" +
+      (c === "openfinal" && !target.cls ? "이 학생 2회차 열기 (3시간)" : CMD_LABEL[c]) + "</button>").join("");
   m.hidden = false;
   const w = m.offsetWidth, h = m.offsetHeight;
   m.style.left = Math.max(8, Math.min(x, innerWidth - w - 8)) + "px";
@@ -322,7 +327,9 @@ async function sendCmd(target, cmd) {
     const q = { action: "tcmd", k: KEY, cmd: cmd, arg: arg };
     if (target.cls) q.cls = target.cls; else q.sid = target.sid;
     const r = await ask(q, 30000);
-    if (r && r.ok) tnote((target.cls ? r.n + "명에게 " : who + " 학생에게 ") + "'" + CMD_LABEL[cmd] + "'를 보냈습니다. 학생 화면에 20초 안에 반영됩니다.");
+    if (r && r.ok && cmd === "openfinal") { tnote(who + "의 2회차를 열었습니다(3시간). 기다리던 학생 화면은 20초 안에 최종 글쓰기로 넘어갑니다."); load(true); }
+    else if (r && r.ok && cmd === "closefinal") { tnote(who + "의 2회차를 닫았습니다. 쓰는 중인 학생은 그대로 두고, 새로 들어오는 학생부터 닫힙니다."); load(true); }
+    else if (r && r.ok) tnote((target.cls ? r.n + "명에게 " : who + " 학생에게 ") + "'" + CMD_LABEL[cmd] + "'를 보냈습니다. 학생 화면에 20초 안에 반영됩니다.");
     else tnote("보내지 못했습니다: " + ((r && r.error) === "NO_TARGET" ? "보낼 학생이 없습니다" : (r && r.error) || "응답 없음"));
   } catch (e) { tnote("보내지 못했습니다. 잠시 뒤 다시 해 보세요."); }
 }
@@ -367,6 +374,14 @@ document.addEventListener("click", async (e) => {
 });
 
 let lastData = null;
+// 이 반의 2회차(최종 글쓰기) 상태: 선생님이 열어야 시작, 연 뒤 3시간 동안만
+function finalBadge(d) {
+  if (d.fmode === "all") return '<div>2회차<b>모두 열림</b></div>';
+  if (d.fmode === "none") return '<div class="warnbox">2회차<b>모두 닫힘</b></div>';
+  const until = (d.openCls || {})[cls];
+  return until && until > Date.now() ? '<div>2회차<b style="color:var(--green)">열림 ~' + clock(until) + "</b></div>"
+                                     : '<div>2회차<b>닫힘</b></div>';
+}
 
 function showMsg(html) { $("body").innerHTML = '<div class="msg">' + html + "</div>"; $("bar").hidden = true; }
 
