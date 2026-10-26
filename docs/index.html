@@ -106,7 +106,10 @@
   .timer{font-variant-numeric:tabular-nums;font-size:22px;font-weight:600;letter-spacing:.5px;min-width:74px;text-align:right}
   .timer.warn{color:var(--warn)}
   .timer.danger{color:var(--danger)}
-  .top-actions{display:flex;gap:8px}
+  .top-actions{display:flex;gap:8px;margin-left:10px}
+  /* 단어 사전: 제출 버튼과 떨어진 자리(타이머 왼쪽), 모양도 다르게 (2026-10-26, 제출 옆이라 아슬하다는 의견) */
+  .dict-top{border-color:#2F6FDB;color:#2457B3;background:#F4F8FE}
+  .dict-top:hover{background:#E9F0FC}
   @media (max-width:640px){
     .top{padding:8px 12px;gap:8px}
     .top-title{flex-basis:100%}
@@ -349,9 +352,9 @@
       <span class="stat phase" id="stPhase" hidden></span>
       <span class="stat env" id="stEnv" hidden></span>
     </div>
+    <button id="dictTop" class="btn small dict-top" type="button" hidden>단어 사전</button>
     <div class="timer-wrap" id="timerWrap"><span class="phase-label" id="phaseLabel"></span><div class="timer" id="timer" aria-live="off">--:--</div></div>
     <div class="top-actions">
-      <button id="dictTop" class="btn small" hidden>사전</button>
       <button id="fsBtn" class="btn ghost small" hidden>전체 화면</button>
       <button id="submitTop" class="btn primary small">제출</button>
     </div>
@@ -524,7 +527,7 @@
    교사용 설정 (여기만 고치면 됩니다)
    ════════════════════════════════════════════════════════════════ */
 const CONFIG = {
-  version: "2026-10-23 (2회차 마감)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
+  version: "2026-10-26 (사전 버튼 자리)",   // 화면 아래에 표시됩니다. 새 파일을 올렸는데 이 글자가 안 바뀌면 옛 파일이 열린 것입니다.
   title: "Good for All of Us: A Place for Everyone",
   subtitle: "1학년 2학기 영어 쓰기 수행평가",
 
