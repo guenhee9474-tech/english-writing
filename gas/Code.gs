@@ -688,8 +688,10 @@ function overviewRows(sh) {
   const b = sh.getRange(2, COL.pdf, n, 1).getValues();        // 초안 PDF (11)
   const c = sh.getRange(2, COL.dup, n, 4).getValues();        // 중복 … 최종 PDF (13-16)
   const out = [];
+  const stale = staleRows(n, (i) => [a[i][COL.sid - 1], a[i][COL.name - 1], a[i][COL.phase - 1], c[i][0]]);
   for (let i = 0; i < n; i++) {
     if (String(c[i][0] || "") === "이어받음") continue;             // 원래 줄에 이어 붙인 빈 줄은 총괄에서 뺀다
+    if (stale[i] !== undefined) continue;                         // 다른 기기에서 로그인만 하고 멈춘 줄
     out.push(a[i].concat(["", "", b[i][0], ""], c[i]));        // 9,10 = 빈칸 / 12 = 빈칸
   }
   return out;
@@ -707,6 +709,30 @@ function findRow(sh, sid, key) {
   return 0;
 }
 function newKey() { return Utilities.getUuid().replace(/-/g, "").slice(0, 20); }
+
+// 이 기기의 줄(r)은 조사·초안 작성 중인데 같은 학번·이름의 다른 줄이 이미 초안 이상을 냈으면
+// (예: 1회차에 기기 A로 로그인만 하고, 기기 B로 초안을 냄) 2회차에 기기 A로 들어와도 낸 글이 열리게 합니다.
+// 멈춘 줄은 "이어받음"으로 숨기고, 앞선 줄의 열쇠를 이 기기에도 줍니다(두 기기가 같은 줄을 씀).
+function moveToAhead(sh, r, sid, name) {
+  return withLock(30000, "앞선 줄로 잇기 " + sid, function () {
+    const last = sh.getLastRow();
+    const v = sh.getRange(2, 1, last - 1, COL.dup).getValues();
+    const st = staleRows(v.length, (i) => [v[i][COL.sid - 1], v[i][COL.name - 1], v[i][COL.phase - 1], v[i][COL.dup - 1]]);
+    const ai = st[r - 2];
+    if (ai === undefined || nameKey(v[ai][COL.name - 1]) !== nameKey(name)) return null;
+    let key = String(v[ai][COL.key - 1] || "");
+    if (!key) { key = newKey(); sh.getRange(ai + 2, COL.key).setValue(key); }
+    const stamp = Utilities.formatDate(new Date(), "Asia/Seoul", "MM-dd HH:mm");
+    sh.getRange(r, COL.key).setValue("이어받음 " + stamp);
+    sh.getRange(r, COL.dup).setValue("이어받음");
+    try { CacheService.getScriptCache().remove("mon_all"); } catch (e) {}
+    logError("멈춘 줄을 앞선 줄로 잇기(정상 처리)", new Error("학번 " + sid + ": " + r + "행 → " + (ai + 2) + "행"), "다른 기기에서 낸 글이 열립니다");
+    const a = sh.getRange(ai + 2, 1, 1, DRAFT_HEADER.length).getValues()[0];
+    return { found: !!a[COL.json - 1], data: a[COL.json - 1] || null, at: a[COL.at - 1], phase: a[COL.phase - 1] || "", key: key,
+             name: String(a[COL.name - 1] || name), dup: false, transferred: true,
+             finalAt: String(a[COL.phase - 1]) === "done" ? (a[COL.finalAt - 1] || null) : null };
+  }, true);
+}
 
 // 로그인: 열쇠가 맞으면 그 줄을, 없으면 (열쇠 칸이 비어 있는 같은 학번 줄이 있으면 이어받고) 아니면 새 줄을 만든다
 function loadOrRegister(sid, name, key, nameOk, rid, rosterOk) {
@@ -726,6 +752,10 @@ function loadOrRegister(sid, name, key, nameOk, rid, rosterOk) {
       // 앞 학생의 학번만 치면 그 학생 글이 열리기 때문입니다. 선생님 확인(nameOk)이 있으면 엽니다.
       const stored = String(v[COL.name - 1] || "");
       if (stored && nameKey(stored) !== nameKey(name) && !nameOk) return { found: false, error: "NAME_MISMATCH", hint: stored.slice(0, 1) + "*".repeat(Math.max(1, stored.length - 1)) };
+      if ((PHASE_ORDER[String(v[COL.phase - 1] || "research")] || 0) < PHASE_ORDER.draftDone) {
+        const moved = moveToAhead(sh, r, sid, stored || name);
+        if (moved) return moved;
+      }
       const taken = wasTaken(key);
       if (taken) clearTaken(key);                // 다시 로그인했으니 이제부터 저장을 받습니다
       return { found: !!v[COL.json - 1], data: v[COL.json - 1] || null, at: v[COL.at - 1], phase: v[COL.phase - 1] || "", key: key,
@@ -994,6 +1024,7 @@ function takeover(sid, kp, k) {
       if (oi < 0 || (PHASE_ORDER[v[i][COL.phase - 1]] || 0) > (PHASE_ORDER[v[oi][COL.phase - 1]] || 0)) oi = i;
     }
     if (oi < 0) return { error: "NO_ORIGINAL" };
+    if ((PHASE_ORDER[v[di][COL.phase - 1]] || 0) > (PHASE_ORDER[v[oi][COL.phase - 1]] || 0)) return { error: "DUP_AHEAD" };
     const newKeyVal = String(v[di][COL.key - 1]);
     const stamp = Utilities.formatDate(new Date(), "Asia/Seoul", "MM-dd HH:mm");
     sh.getRange(oi + 2, COL.key).setValue(newKeyVal);
@@ -1006,6 +1037,30 @@ function takeover(sid, kp, k) {
   }, true);
 }
 function isMerged(row) { return String(row[COL.dup - 1] || "") === "이어받음"; }
+/* 다른 기기에서 로그인만 하고 멈춘 줄: 같은 학번·이름의 '나중에 생긴' 줄이 이미 초안 이상을 냈는데 이 줄은 조사·초안 작성 중.
+   (먼저 생긴 줄만. 초안을 낸 뒤에 생긴 새 기기 줄은 지금처럼 선생님이 "기존 기록 잇기"로 확인해서 잇습니다.)
+   현황·채점·총괄에서는 숨기고, 그 기기로 다시 로그인하면 앞선 줄로 이어 줍니다.
+   at(i) → [학번, 이름, 단계, 중복칸]. 돌려주는 값: { 숨길 줄 번호: 앞선 줄 번호 }, 그리고 앞선 줄마다 숨긴 개수(.n) */
+function staleRows(n, at) {
+  const best = {};
+  for (let i = 0; i < n; i++) {
+    const r = at(i), sid = String(r[0] || "").trim();
+    if (!sid || String(r[3] || "") === "이어받음") continue;
+    const k = sid + "|" + nameKey(r[1]), o = PHASE_ORDER[String(r[2] || "research")] || 0;
+    if (!(k in best) || o > best[k].o) best[k] = { o: o, i: i };
+  }
+  const out = { n: {} };
+  for (let i = 0; i < n; i++) {
+    const r = at(i), sid = String(r[0] || "").trim();
+    if (!sid || String(r[3] || "") === "이어받음") continue;
+    const b = best[sid + "|" + nameKey(r[1])];
+    if (b.i > i && b.o >= PHASE_ORDER.draftDone && (PHASE_ORDER[String(r[2] || "research")] || 0) < PHASE_ORDER.draftDone) {
+      out[i] = b.i;
+      out.n[b.i] = (out.n[b.i] || 0) + 1;
+    }
+  }
+  return out;
+}
 function readDraft(sid, key) {
   const sh = draftSheet();
   const r = findRow(sh, sid, key);
@@ -1680,9 +1735,10 @@ function gradeData(cls, key) {
     const seen = {};
     if (last >= 2) {
       const rows = sh.getRange(2, 1, last - 1, COL.finalPdf).getValues();
-      rows.forEach((r) => {
+      const stale = staleRows(rows.length, (i) => [rows[i][COL.sid - 1], rows[i][COL.name - 1], rows[i][COL.phase - 1], rows[i][COL.dup - 1]]);
+      rows.forEach((r, i) => {
         const sid = String(r[COL.sid - 1] || "").trim();
-        if (!sid || String(r[COL.dup - 1] || "") === "이어받음") return;
+        if (!sid || String(r[COL.dup - 1] || "") === "이어받음" || stale[i] !== undefined) return;
         const c = classOf(sid);
         if (cls && c !== cls) return;
         let st = {};
@@ -1690,7 +1746,7 @@ function gradeData(cls, key) {
         seen[sid] = true;
         out.students.push({
           c: c, sid: sid, nm: String(r[COL.name - 1] || ""), ph: String(r[COL.phase - 1] || "research"),
-          dup: String(r[COL.dup - 1] || "") === "Y",
+          dup: String(r[COL.dup - 1] || "") === "Y" && !stale.n[i],
           dr: ms(r[COL.draftAt - 1]), fn: ms(r[COL.finalAt - 1]),
           final: String(st.final || ""), pdf: String(r[COL.finalPdf - 1] || "")
         });
@@ -1718,7 +1774,7 @@ function gradeData(cls, key) {
 
 /* "채점" 탭: 학번 한 줄씩. 채점 페이지(docs/grade.html)가 쓰는 칸과 선생님 PC의 Claude 가 쓰는 칸이 따로입니다.
    점수 자체는 적지 않습니다(페이지가 규칙으로 계산). 적는 것은 사람이 정한 값과 AI 표시뿐입니다. */
-const GRADE_HEAD = ["학번", "이름", "오류 수", "점수 고침(JSON)", "메모", "AI 표시(JSON)", "AI 표시 시각", "고친 시각", "가감(JSON)"];
+const GRADE_HEAD = ["학번", "이름", "오류 수", "점수 고침(JSON)", "메모", "AI 표시(JSON)", "AI 표시 시각", "고친 시각", "가감(JSON)", "오류로 센 표시(JSON)"];
 function gradeSheet() {
   const ss = logBook();
   let sh = ss.getSheetByName("채점");
@@ -1739,13 +1795,13 @@ function gradeRows() {
     const sid = String(r[0] || "").trim();
     if (!sid) return;
     const js = (v, d) => { try { return v ? JSON.parse(String(v)) : d; } catch (e) { return d; } };
-    out[sid] = { row: i + 2, v: { e: r[2] === "" ? null : Number(r[2]), ov: js(r[3], {}), memo: String(r[4] || ""), marks: js(r[5], null), mAt: ms(r[6]), at: ms(r[7]), adj: js(r[8], []) } };
+    out[sid] = { row: i + 2, v: { e: r[2] === "" ? null : Number(r[2]), ov: js(r[3], {}), memo: String(r[4] || ""), marks: js(r[5], null), mAt: ms(r[6]), at: ms(r[7]), adj: js(r[8], []), ok: js(r[9], []) } };
   });
   return out;
 }
 function gradeRowFor(sh, rows, sid, name) {
   if (rows[sid]) return rows[sid].row;
-  sh.appendRow([sid, safeCell(name || ""), "", "", "", "", "", "", ""]);
+  sh.appendRow([sid, safeCell(name || ""), "", "", "", "", "", "", "", ""]);
   return sh.getLastRow();
 }
 function gradeSave(p) {
@@ -1775,6 +1831,12 @@ function gradeSave(p) {
       const clean = (Array.isArray(adj) ? adj : []).map((a) => ({ r: String((a && a.r) || "").trim().slice(0, 100), p: Math.max(-60, Math.min(60, Math.round(Number(a && a.p) || 0))) }))
         .filter((a) => a.r && a.p).slice(0, 10);
       sh.getRange(row, 9).setValue(clean.length ? JSON.stringify(clean) : "");
+    }
+    if (p.ok !== undefined) {   // 선생님이 '오류로 셈'으로 고른 AI 표시: ["시작-끝", …]
+      let ok = [];
+      try { ok = JSON.parse(String(p.ok || "[]")) || []; } catch (e) { ok = []; }
+      const clean = (Array.isArray(ok) ? ok : []).map((x) => String(x)).filter((x) => /^\d{1,5}-\d{1,5}$/.test(x)).slice(0, 60);
+      sh.getRange(row, 10).setValue(clean.length ? JSON.stringify(clean) : "");
     }
     sh.getRange(row, 8).setValue(new Date());
     SpreadsheetApp.flush();
@@ -1897,10 +1959,12 @@ function readMonitorRows() {
       const n = last - 1;
       const a = sh.getRange(2, 1, n, 8).getValues();          // 학번 … 자동집계
       const b = sh.getRange(2, COL.dup, n, 3).getValues();    // 중복, 초안제출시각, 최종제출시각
+      const stale = staleRows(n, (i) => [a[i][COL.sid - 1], a[i][COL.name - 1], a[i][COL.phase - 1], b[i][0]]);
       for (let i = 0; i < n; i++) {
         const sid = String(a[i][COL.sid - 1] || "").trim();
         if (!sid) continue;
         if (String(b[i][0] || "") === "이어받음") continue;          // 원래 줄에 이어 붙인 빈 줄은 보이지 않게
+        if (stale[i] !== undefined) continue;                     // 다른 기기에서 로그인만 하고 멈춘 줄
         const c = classOf(sid);
         if (!seenCls[c]) { seenCls[c] = true; out.classes.push(c); }
         seenSid[sid] = true;
@@ -1914,17 +1978,19 @@ function readMonitorRows() {
           bs: Number(num(meta, /대량입력 (\d+)/) || 0), dc: Number(num(meta, /사전 (\d+)/) || 0),
           sn: Number(a[i][COL.count - 1] || 0),
           at: ms(a[i][COL.at - 1]), dr: ms(b[i][1]), fn: ms(b[i][2]),
-          dup: dup
+          dup: dup && !stale.n[i], od: stale.n[i] || 0
         };
-        if (dup) {
+        if (dup && !stale.n[i]) {
           // 같은 학번·같은 이름의 원래 줄이 있으면 "기존 기록 잇기"를 할 수 있습니다 (열쇠 앞 6자로 이 줄을 가리킴)
           const nk = nameKey(a[i][COL.name - 1]);
           let orig = null;
           for (let j = 0; j < n; j++) {
             if (j === i || String(a[j][COL.sid - 1] || "").trim() !== sid || String(b[j][0] || "") === "이어받음") continue;
-            if (nameKey(a[j][COL.name - 1]) === nk) { orig = String(a[j][COL.phase - 1] || "research"); break; }
+            const ph = String(a[j][COL.phase - 1] || "research");
+            if (nameKey(a[j][COL.name - 1]) === nk && (orig === null || (PHASE_ORDER[ph] || 0) > (PHASE_ORDER[orig] || 0))) orig = ph;
           }
-          if (orig !== null) { st.kp = String(a[i][COL.key - 1] || "").slice(0, 6); st.op = orig; }
+          // 이 줄이 원래 줄보다 앞서 있으면(여기서 글을 냄) 잇기를 내놓지 않습니다
+          if (orig !== null && (PHASE_ORDER[st.ph] || 0) <= (PHASE_ORDER[orig] || 0)) { st.kp = String(a[i][COL.key - 1] || "").slice(0, 6); st.op = orig; }
         }
         out.students.push(st);
       }

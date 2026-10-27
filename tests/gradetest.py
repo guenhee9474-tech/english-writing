@@ -48,6 +48,7 @@ def mock(route):
             if "ov" in p: g["ov"] = json.loads(p["ov"])
             if "memo" in p: g["memo"] = p["memo"]
             if "adj" in p: g["adj"] = json.loads(p["adj"])
+            if "ok" in p: g["ok"] = json.loads(p["ok"])
             s["g"] = g
             out = {"ok": True, "g": g}
     else:
@@ -88,6 +89,27 @@ with sync_playwright() as p:
     check('AI 표시 1개 (빨간 칠)', pg.locator('.text .mk').count() == 1)
     check('AI 표시의 HTML 은 글자로만', '<b>예시</b>' in pg.inner_text('.marks') and pg.locator('.marks b').count() == 0)
     check('자동: 참여 24 · 분량 12 · 표현 12, 총점은 오류 수 전이라 ?', pg.inner_text('#score .total').startswith('?'))
+    pg.click('.marks li[data-mid] .tg'); pg.wait_for_timeout(1200)
+    mid = pg.get_attribute('.marks li[data-mid]', 'data-mid')
+    check("AI 표시를 '오류로 셈' → 오류 수 1, 어느 표시인지 저장", pg.input_value('#errIn') == '1' and DB['10101']['g'].get('ok') == [mid] and DB['10101']['g']['e'] == 1)
+    check('센 표시는 글 속에서도 진하게', pg.locator('.text .mk.yes').count() == 1)
+    pg.click('.text .mk[data-mid]'); pg.wait_for_timeout(1200)
+    check('글 속 칠을 다시 누르면 뺌 → 오류 수 0', pg.input_value('#errIn') == '0' and DB['10101']['g'].get('ok') == [])
+    pg.click('[data-bulk="all"]'); pg.wait_for_timeout(1200)
+    check("'AI 표시 모두 오류로' → 다 세고 오류 수도 그만큼", pg.input_value('#errIn') == '1' and len(DB['10101']['g']['ok']) == 1)
+    pg.click('[data-bulk="none"]'); pg.wait_for_timeout(1200)
+    check("'모두 빼기' → 0", pg.input_value('#errIn') == '0' and DB['10101']['g']['ok'] == [])
+    # AI 가 놓친 곳을 선생님이 글에서 끌어 골라 표시
+    pg.evaluate("""() => { const box = document.querySelector('#paper .text'); const w = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+      let t; while ((t = w.nextNode())) { const i = t.nodeValue.indexOf('wheelchairs'); if (i >= 0) { const r = document.createRange(); r.setStart(t, i); r.setEnd(t, i + 11);
+        const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); break; } } document.dispatchEvent(new MouseEvent('mouseup')); }""")
+    pg.wait_for_timeout(300)
+    check('글에서 고르면 오류로 표시 단추가 뜸', pg.is_visible('#selMark'))
+    pg.click('#selMark'); pg.wait_for_timeout(1200)
+    i0 = GOOD.index('wheelchairs')
+    check('선생님 표시가 저장되고 (원래 글 위치), 오류 수 +1, 보라색으로', DB['10101']['g']['ok'] == [f'{i0}-{i0 + 11}'] and pg.input_value('#errIn') == '1' and pg.locator('.text .mk.tch').count() == 1)
+    pg.click('.marks li.tch .tg'); pg.wait_for_timeout(1200)
+    check("선생님 표시 '빼기' → 0", DB['10101']['g']['ok'] == [] and pg.input_value('#errIn') == '0')
     pg.fill('#errIn', '4'); pg.wait_for_timeout(1200)
     check('오류 4개 → 57점, 서버에 저장', pg.inner_text('#score .total').startswith('57') and any(s.get('e') == '4' and s.get('sid') == '10101' for s in saves), pg.inner_text('#score .total'))
 
@@ -117,6 +139,11 @@ with sync_playwright() as p:
     check('엑셀: 총점 56, 가감 사유, 메모(글자 그대로)', '<v>56</v>' in s1 and '발표 우수 +2' in s1 and '&lt;script&gt;' in s1, s1[:300])
     check('엑셀: 아직 오류 수 없는 학생은 입력 필요', '오류 수 입력 필요' in s1)
 
+    with pg.expect_download() as d2:
+        pg.click('#btnXlsxCls')
+    z2 = zipfile.ZipFile(io.BytesIO(open(d2.value.path(), 'rb').read()))
+    check('이 반 엑셀: 지금 반 시트 하나, 그 반 학생만, 파일 이름에 반', d2.value.suggested_filename.startswith('수행평가_채점_101반') and len([n for n in z2.namelist() if n.startswith('xl/worksheets/')]) == 1
+          and '101반' in z2.read('xl/workbook.xml').decode() and '최민준' not in z2.read('xl/worksheets/sheet1.xml').decode())
     with ctx.expect_page() as w:
         pg.evaluate('window.print = () => {}')
         pg.click('#btnPrint')

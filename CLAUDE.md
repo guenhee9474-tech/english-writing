@@ -217,4 +217,5 @@ GitHub Pages 반영은 최대 10분, Safari 캐시는 주소 뒤 `?v=숫자`로 
 - AI 표시는 선생님 PC에서 `py -3.12 tools/ai_marks.py`를 실행하면 Claude 로 만들어 `gradeMarks`로 올린다(표시 없거나 표시 뒤 다시 낸 글만). 교사 열쇠는 처음 한 번 묻고 `%LOCALAPPDATA%\SchoolAgent\grading\settings.json`에만 둔다. 영어 글만, 이름·학번·한글·숫자·전화·메일을 가려서 보낸다. 표시는 '의심'일 뿐이고 개수는 선생님이 센다. 업무 어시스턴트(coolwatch)에는 채점 기능을 두지 않는다(교사 결정).
 - 보안: 학생 글·이름·AI 표시·메모·가감 사유는 모두 escape 하거나 `.value`로만 화면에 넣는다(XSS). PDF 링크는 drive/docs.google.com 주소만 링크로 만든다. 열쇠는 `#` 뒤, `referrer`는 보내지 않는다. 엑셀(.xlsx)은 페이지가 라이브러리 없이 만든다.
 - 문장 나누기·Word Bank 는 `index.html`의 `splitSentences`·`CONFIG.wordBank`와 같게 두고, 바꾸면 `grade.html`과 coolwatch 쪽을 함께 바꾼다.
+- AI 표시 중 선생님이 **'오류로 셈'**으로 고른 것은 `gradeSave`의 `ok`(=["시작-끝", …])로 '채점' 탭 10번째 칸에 저장한다. 누를 때마다 오류 수가 ±1 바뀐다. 'AI 표시 모두 오류로'/'모두 빼기'로 한꺼번에 바꿀 수 있다(아닌 것만 눌러 빼는 방식). AI가 놓친 곳은 선생님이 글에서 끌어 골라 '오류로 표시'하면 AI 표시와 겹치지 않는 '시작-끝'이 같은 `ok`에 들어가 보라색 선생님 표시가 된다(글자 위치는 sup 번호를 빼고 셈). 인쇄는 센 표시만 넣는다.
 - 테스트: `python tests/gradetest.py`(가짜 서버, XSS·열쇠·점수·가감·엑셀·인쇄), `python tests/ai_marks_test.py`(가리기·표시 올리기).

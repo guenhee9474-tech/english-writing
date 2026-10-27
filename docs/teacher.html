@@ -266,6 +266,7 @@ function render(d) {
     if (s.hg > 0) flags.push("한글 " + s.hg);
     if (s.bs > 0) flags.push("대량 " + s.bs);
     if (s.dup) flags.push("중복");
+    if (s.od) flags.push("다른 기기 " + s.od);
     if (s.rm) flags.push("명단 확인: " + s.rm);
     if (s.ph === "draftDone" && ((lastData && lastData.openSid) || {})[s.sid] > Date.now()) flags.push("2회차 열림");
     let sub = "";
@@ -370,7 +371,7 @@ document.addEventListener("click", async (e) => {
   try {
     const r = await ask({ action: "takeover", k: KEY, sid: b.dataset.sid, kp: b.dataset.kp }, 30000);
     if (r && r.ok) { alert("연결했습니다. 학생에게 새로고침 후 같은 학번·이름으로 다시 로그인하라고 알려 주세요."); load(true); }
-    else alert("연결하지 못했습니다: " + ((r && r.error) || "응답 없음") + "\n(NO_ORIGINAL: 같은 이름의 원래 기록이 없음)");
+    else alert("연결하지 못했습니다: " + ((r && r.error) || "응답 없음") + "\n(NO_ORIGINAL: 같은 이름의 원래 기록이 없음 / DUP_AHEAD: 이 기기 쪽 글이 더 앞서 있어 잇지 않음)");
   } catch (err) { alert("연결하지 못했습니다. 잠시 뒤 다시 눌러 보세요."); }
   finally { b.disabled = false; }
 });

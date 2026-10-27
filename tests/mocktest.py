@@ -75,6 +75,14 @@ def add_row(sid, name, key, dup):
 def norm(s):
     return re.sub(r'\s+', '', s or '').lower()
 
+def ahead_of(r):
+    """gas/Code.gs 의 staleRows 와 같은 규칙: r 이 조사·초안 작성 중이고 같은 학번·이름의 다른 줄이 초안 이상이면 그 줄."""
+    if r['dup'] == '이어받음' or ORDER.get(r['phase'], 0) >= ORDER['draftDone']:
+        return None
+    c = [x for x in rows[rows.index(r) + 1:] if x['sid'] == r['sid'] and x['dup'] != '이어받음' and norm(x['name']) == norm(r['name'])]
+    best = max(c, key=lambda x: ORDER.get(x['phase'], 0), default=None)
+    return best if best and ORDER.get(best['phase'], 0) >= ORDER['draftDone'] else None
+
 def write_row(r, b, g, phase, allow_regress):
     """gas/Code.gs 의 saveDraft 와 같은 규칙."""
     ph = phase
@@ -177,6 +185,11 @@ def mock(route):
         r = find(sid, key)
         if r and r['name'] and norm(r['name']) != norm(name) and g('nameOk') != '1':
             out = {'found': False, 'error': 'NAME_MISMATCH', 'hint': r['name'][0] + '*' * max(1, len(r['name']) - 1)}
+        elif r and ahead_of(r):
+            a = ahead_of(r)                  # 멈춘 줄의 기기로 들어옴: 앞선 줄로 이어 줌
+            r['key'] = '이어받음'; r['dup'] = '이어받음'
+            out = {'found': bool(a['data']), 'data': a['data'], 'key': a['key'], 'name': a['name'],
+                   'dup': False, 'phase': a['phase'], 'at': a['at'], 'transferred': True}
         elif r:
             out = {'found': bool(r['data']), 'data': r['data'], 'key': key, 'name': r['name'],
                    'dup': r['dup'], 'phase': r['phase'], 'at': r['at'], 'taken': key in TAKEN}
@@ -251,14 +264,16 @@ def monitor(k):
         return {'error': 'BAD_KEY'}
     st = []
     for i, r in enumerate(rows):
-        if r['dup'] == '이어받음':
+        if r['dup'] == '이어받음' or ahead_of(r):
             continue
+        od = sum(1 for y in rows if ahead_of(y) is r)
         x = {'c': r['sid'][0] + '학년 ' + str(int(r['sid'][1:3])) + '반', 'sid': r['sid'], 'nm': r['name'], 'ph': r['phase'],
-             'lv': 0, 'hg': 0, 'bs': 0, 'dc': 0, 'sn': 0, 'at': 0, 'dr': 0, 'fn': 0, 'dup': r['dup'] is True, 'rm': r.get('rm', '')}
-        if r['dup'] is True:
-            o = next((y for j, y in enumerate(rows) if j != i and y['sid'] == r['sid'] and y['dup'] != '이어받음'
-                      and norm(y['name']) == norm(r['name'])), None)
-            if o:
+             'lv': 0, 'hg': 0, 'bs': 0, 'dc': 0, 'sn': 0, 'at': 0, 'dr': 0, 'fn': 0, 'dup': r['dup'] is True and not od, 'od': od, 'rm': r.get('rm', '')}
+        if r['dup'] is True and not od:
+            c = [y for j, y in enumerate(rows) if j != i and y['sid'] == r['sid'] and y['dup'] != '이어받음'
+                 and norm(y['name']) == norm(r['name'])]
+            o = max(c, key=lambda y: ORDER.get(y['phase'], 0), default=None)
+            if o and ORDER.get(r['phase'], 0) <= ORDER.get(o['phase'], 0):
                 x['kp'] = r['key'][:6]; x['op'] = o['phase']
         st.append(x)
     now = time.time() * 1000
@@ -277,6 +292,8 @@ def takeover(k, sid, kp):
     if not cand:
         return {'error': 'NO_ORIGINAL'}
     o = max(cand, key=lambda r: ORDER.get(r['phase'], 0))
+    if ORDER.get(d['phase'], 0) > ORDER.get(o['phase'], 0):
+        return {'error': 'DUP_AHEAD'}
     nk = d['key']
     o['key'] = nk
     d['key'] = '이어받음'; d['dup'] = '이어받음'
@@ -1003,6 +1020,22 @@ with sync_playwright() as p:
     check('조사 중 나간 학생: 다시 들어오면 초안으로 내고 마감', rw['phase'] == 'draftDone' and W.eval_on_selector('#app', 'e=>e.hidden'), rw['phase'])
     for c_ in (ctxZ, ctxY, ctxT3, ctxW): c_.close()
     FINAL['default'] = True
+
+    print('T23 1회차에 기기 두 대: 로그인만 한 기기 + 초안 낸 기기')
+    ctxP, P = new_page(b)
+    P.goto('http://127.0.0.1:8880/index.html?as=1&cp=1'); P.fill('#sid', '10320'); P.fill('#name', '두기기'); P.click('#startBtn'); P.wait_for_timeout(1300)
+    ctxQ, Q2 = new_page(b); to_draftdone(Q2, '10320', '두기기')
+    mine = [r for r in rows if r['sid'] == '10320']
+    check('시트에는 줄이 두 개 (조사 중 + 초안 제출)', sorted(r['phase'] for r in mine) == ['draftDone', 'research'], [r['phase'] for r in mine])
+    ms_ = [s for s in monitor(TKEY)['students'] if s['sid'] == '10320']
+    check('현황에는 카드 하나 (초안 제출, 다른 기기 1)', len(ms_) == 1 and ms_[0]['ph'] == 'draftDone' and ms_[0]['od'] == 1 and 'kp' not in ms_[0], ms_)
+    qkey = next(r['key'] for r in mine if r['phase'] == 'draftDone')
+    P.goto('http://127.0.0.1:8880/index.html?as=1&cp=1'); P.fill('#sid', '10320'); P.fill('#name', '두기기'); P.click('#startBtn'); P.wait_for_timeout(1800)
+    check('로그인만 한 기기로 다시 들어오면 낸 초안이 열림 (2회차가 열려 있으니 최종 작성으로, 조사 중으로 되돌아가지 않음)',
+          P.evaluate('state.phase') in ('draftDone', 'final') and P.evaluate("localStorage.getItem('czkey:10320')") == qkey, P.evaluate('state.phase'))
+    check('멈춘 줄은 이어받음으로 숨김, 낸 줄은 그대로', [r['dup'] for r in mine if r['phase'] == 'research'] == ['이어받음'] and P.evaluate("document.body.innerText").find('Draft by 두기기') >= 0
+          and next(r for r in mine if r['dup'] != '이어받음')['key'] == qkey)
+    for c_ in (ctxP, ctxQ): c_.close()
 
     # ── 마무리 ──
     print('마무리')
