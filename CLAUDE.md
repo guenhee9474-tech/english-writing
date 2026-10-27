@@ -214,7 +214,7 @@ GitHub Pages 반영은 최대 10분, Safari 캐시는 주소 뒤 `?v=숫자`로 
 - 열쇠는 **교사 열쇠 하나**(현황 화면과 같음). 따로 된 채점 열쇠는 두지 않는다(교사 결정: 번거로움). 새 나가면 `newTeacherKey()`로 바꾸면 현황·채점 주소가 함께 바뀐다.
 - 서버: `grade`(GET 읽기), `gradeSave`(POST: 오류 수 `e`, 고친 점수 `ov`, 메모 `memo`, 가감 `adj`=[{r 사유, p 점수}]), `gradeMarks`(POST: 선생님 PC가 만든 AI 표시). 모두 '채점' 탭(`GRADE_HEAD`)에만 쓰고 학생 줄(초안 탭)은 건드리지 않는다. 쓰기는 스크립트 잠금 안에서, 값은 길이·범위를 잘라서, 글자는 `safeCell`로(수식 방지) 적는다.
 - 점수 규칙은 `grade.html`의 `score()` 한 곳: 참여·준비도 24(1·2회차 둘 24, 하나 16, 접속만 8, 미응시 0) / 완성도·분량 12(문장 9+ 12, 6~8 9, 3~5 6, 1~2 3) / 표현 12(최종 제출했으면 12) / 형식·문법성 12(교사가 오류 수: 0~2 12, 3~5 9, 6~8 6, 9+ 3) + 가감(사유 필수), 총점 0~60. 서버는 점수를 저장하지 않고 사람이 정한 값만 저장한다.
-- AI 표시는 선생님 PC의 업무 어시스턴트(coolwatch `grading/`)가 Claude 로 만들어 올린다. 영어 글만, 이름·학번·한글·숫자·전화·메일을 가려서 보낸다. 표시는 '의심'일 뿐이고 개수는 선생님이 센다.
+- AI 표시는 선생님 PC에서 `py -3.12 tools/ai_marks.py`를 실행하면 Claude 로 만들어 `gradeMarks`로 올린다(표시 없거나 표시 뒤 다시 낸 글만). 교사 열쇠는 처음 한 번 묻고 `%LOCALAPPDATA%\SchoolAgent\grading\settings.json`에만 둔다. 영어 글만, 이름·학번·한글·숫자·전화·메일을 가려서 보낸다. 표시는 '의심'일 뿐이고 개수는 선생님이 센다. 업무 어시스턴트(coolwatch)에는 채점 기능을 두지 않는다(교사 결정).
 - 보안: 학생 글·이름·AI 표시·메모·가감 사유는 모두 escape 하거나 `.value`로만 화면에 넣는다(XSS). PDF 링크는 drive/docs.google.com 주소만 링크로 만든다. 열쇠는 `#` 뒤, `referrer`는 보내지 않는다. 엑셀(.xlsx)은 페이지가 라이브러리 없이 만든다.
 - 문장 나누기·Word Bank 는 `index.html`의 `splitSentences`·`CONFIG.wordBank`와 같게 두고, 바꾸면 `grade.html`과 coolwatch 쪽을 함께 바꾼다.
-- 테스트: `python tests/gradetest.py`(가짜 서버, XSS·열쇠·점수·가감·엑셀·인쇄).
+- 테스트: `python tests/gradetest.py`(가짜 서버, XSS·열쇠·점수·가감·엑셀·인쇄), `python tests/ai_marks_test.py`(가리기·표시 올리기).
