@@ -1,6 +1,11 @@
 """채점 화면(docs/grade.html)의 AI 오류 '의심' 표시를 선생님 PC의 Claude 로 만들어 올립니다.
 
     py -3.12 tools/ai_marks.py            (claudetest 폴더에서, 필요할 때 한 번)
+    py -3.12 tools/ai_marks.py --setup    열쇠를 넣는 작은 창(글자 가림)을 띄워 저장
+    pythonw tools/ai_marks.py --quiet     작업 스케줄러용: 창 없이, 기록 파일(ai_marks.log)에 개수만
+
+작업 스케줄러 '수행평가 AI 표시'가 15분마다 --quiet 로 돌립니다(선생님이 로그인해 있을 때만).
+새로 낸 최종 글이 없으면 서버에 한 번 물어보고 끝나므로 Claude 사용량이 들지 않습니다.
 
 하는 일: 서버(action=grade)에서 최종 글을 받아, 표시가 없거나 표시 뒤에 다시 낸 글만 Claude 로 표시하고
 서버 '채점' 탭에 올립니다(action=gradeMarks). 점수는 매기지 않습니다. 오류 개수는 선생님이 채점 화면에서 셉니다.
@@ -146,7 +151,8 @@ def run(key: str, *, ask: Callable[[str, dict], dict] = server, claude: Callable
     students = data.get("students") or []
     names = [s.get("nm") or "" for s in students]
     todo = [s for s in students if needs_marks(s)]
-    say(f"최종 글 {sum(1 for s in students if s.get('fn'))}개 중 표시할 글 {len(todo)}개")
+    if todo or say is print:
+        say(f"최종 글 {sum(1 for s in students if s.get('fn'))}개 중 표시할 글 {len(todo)}개")
     done = {"marked": 0, "sent": 0, "failed": 0}
     ready: list[dict[str, Any]] = []
 
@@ -177,8 +183,53 @@ def run(key: str, *, ask: Callable[[str, dict], dict] = server, claude: Callable
                 say(f"  {done['marked']}/{len(todo)} 올림")
     if ready:
         send(ready)
-    say(f"끝: {done['sent']}개 올림" + (f", 실패 {done['failed']}개 (다시 실행하면 그것만 다시 해요)" if done["failed"] else ""))
+    if todo or say is print:
+        say(f"끝: {done['sent']}개 올림" + (f", 실패 {done['failed']}개 (다시 실행하면 그것만 다시 해요)" if done["failed"] else ""))
     return done
+
+
+def save_key(key: str) -> str:
+    """모양을 보고, 빈 올리기로 서버가 받는 열쇠인지 확인한 뒤(쓰는 것 없음) 이 PC에만 저장. 문제가 있으면 그 이유."""
+    key = (key or "").strip()
+    if "#k=" in key:   # 주소째 붙여 넣어도 됨
+        key = urllib.parse.unquote(key.split("#k=", 1)[1].split("&", 1)[0])
+    if not re.fullmatch(r"[A-Za-z0-9]{20,80}", key):
+        return "열쇠 모양이 아니에요. 현황 화면 주소의 #k= 뒤 글자(또는 주소 전체)를 붙여 넣어 주세요"
+    if server("POST", {"action": "gradeMarks", "k": key, "items": "[]"}).get("error"):
+        return "서버가 이 열쇠를 받지 않아요"
+    path = settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"key": key}), encoding="utf-8")
+    return ""
+
+
+def setup_window() -> None:
+    """열쇠를 넣는 작은 창. 글자는 ●로 가려져 보입니다."""
+    import tkinter as tk
+    root = tk.Tk()
+    root.title("수행평가 AI 표시 - 열쇠")
+    root.attributes("-topmost", True)
+    tk.Label(root, text="현황 화면 주소(또는 #k= 뒤 글자)를 붙여 넣고 '저장'을 누르세요.\n이 PC에만 저장되고 화면에는 보이지 않아요.", justify="left", padx=14, pady=10).pack()
+    entry = tk.Entry(root, show="●", width=52)
+    entry.pack(padx=14)
+    msg = tk.Label(root, text="", fg="#B42318", padx=14, pady=6)
+    msg.pack()
+
+    def ok() -> None:
+        try:
+            problem = save_key(entry.get())
+        except Exception as exc:
+            problem = f"서버에 닿지 못했어요 ({exc.__class__.__name__})"
+        if problem:
+            msg.config(text=problem)
+            return
+        msg.config(text="저장했어요. 이 창은 3초 뒤 닫혀요.", fg="#0E7C66")
+        root.after(3000, root.destroy)
+
+    tk.Button(root, text="저장", command=ok, width=10).pack(pady=(0, 12))
+    entry.focus_set()
+    root.bind("<Return>", lambda _: ok())
+    root.mainloop()
 
 
 def main() -> None:
@@ -186,21 +237,52 @@ def main() -> None:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
-    path = settings_path()
+    if "--setup" in sys.argv:
+        setup_window()
+        return
+    quiet = "--quiet" in sys.argv
+    log = settings_path().with_name("ai_marks.log")
+    say = (lambda m: _append(log, m)) if quiet else print
     try:
-        key = json.loads(path.read_text(encoding="utf-8")).get("key") or ""
+        key = json.loads(settings_path().read_text(encoding="utf-8")).get("key") or ""
     except (OSError, ValueError):
         key = ""
-    if "--key" in sys.argv or not key:
-        key = getpass.getpass("현황 화면 주소의 #k= 뒤 글자(교사 열쇠)를 붙여 넣고 Enter (화면에 안 보여요): ").strip()
-        if not re.fullmatch(r"[A-Za-z0-9]{20,80}", key):
-            raise SystemExit("열쇠 모양이 아니에요")
-        if server("POST", {"action": "gradeMarks", "k": key, "items": "[]"}).get("error"):   # 빈 올리기로 확인 (쓰는 것 없음)
-            raise SystemExit("서버가 이 열쇠를 받지 않아요")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"key": key}), encoding="utf-8")
-        print("열쇠를 이 PC에 저장했어요")
-    run(key)
+    if not key:
+        if quiet:
+            say("열쇠가 없어 건너뜀 (py -3.12 tools/ai_marks.py --setup)")
+            return
+        problem = save_key(getpass.getpass("현황 화면 주소의 #k= 뒤 글자(교사 열쇠)를 붙여 넣고 Enter (화면에 안 보여요): "))
+        if problem:
+            raise SystemExit(problem)
+        key = json.loads(settings_path().read_text(encoding="utf-8"))["key"]
+    lock = settings_path().with_name("ai_marks.lock")
+    try:   # 앞의 실행이 아직 돌고 있으면(1시간 안) 건너뜀
+        if time.time() - lock.stat().st_mtime < 3600:
+            say("앞의 실행이 아직 돌고 있어 건너뜀")
+            return
+    except OSError:
+        pass
+    lock.write_text(str(os.getpid()), encoding="utf-8")
+    try:
+        run(key, say=say)
+    except SystemExit as exc:
+        say(str(exc))
+    except Exception as exc:   # 학생 글은 남기지 않음
+        say(f"실패 ({exc.__class__.__name__})")
+    finally:
+        try:
+            lock.unlink()
+        except OSError:
+            pass
+
+
+def _append(path: Path, line: str) -> None:
+    """개수와 상태만 (학생 글·이름은 넣지 않음). 너무 길어지면 뒤쪽 200줄만 남김."""
+    try:
+        old = path.read_text(encoding="utf-8").splitlines()[-199:] if path.exists() else []
+        path.write_text("\n".join(old + [time.strftime("%Y-%m-%d %H:%M ") + line]) + "\n", encoding="utf-8")
+    except OSError:
+        pass
 
 
 if __name__ == "__main__":
