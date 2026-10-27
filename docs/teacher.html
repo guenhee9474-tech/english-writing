@@ -114,6 +114,7 @@
 <header>
   <div class="top">
     <h1>수행평가 현황</h1>
+    <a id="gradeLink" href="grade.html" style="color:#C7CEDA;font-size:14px;text-decoration:none;border:1px solid #3B475E;border-radius:8px;padding:4px 10px">채점</a>
     <div class="fresh"><span class="dot" id="dot"></span><span id="fresh">불러오는 중…</span></div>
   </div>
   <div class="tabs" id="tabs"></div>
@@ -136,6 +137,7 @@ const q = new URLSearchParams(location.search);
 const KEY = q.get("k") || new URLSearchParams(location.hash.slice(1)).get("k") || "";
 if (q.get("k")) { try { history.replaceState(null, "", location.pathname + "#k=" + encodeURIComponent(KEY)); } catch (e) {} }
 const $ = (id) => document.getElementById(id);
+$("gradeLink").href = "grade.html#k=" + encodeURIComponent(KEY);   // 같은 열쇠로 채점 화면 (# 뒤라 서버로 가지 않음)
 
 let cls = q.get("cls") || localStorage.getItem("t_cls") || "";
 let sortBy = localStorage.getItem("t_sort") || "sid";

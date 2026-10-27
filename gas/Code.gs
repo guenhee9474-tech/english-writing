@@ -140,6 +140,8 @@ function handlePost(e) {
   try {
     const p = (e && e.parameter) || {};
     if (p.action === "roster") return textOut(putRoster(p.k || "", p.rows || ""));   // 교사 열쇠로 확인 (학생 token 아님)
+    if (p.action === "gradeSave") return jsonText(gradeSave(p));                      // 채점 페이지: 오류 수·고친 점수·메모
+    if (p.action === "gradeMarks") return jsonText(gradeMarks(p));                    // 선생님 PC(업무 어시스턴트)의 Claude 표시
     if (CFG.token && p.token !== CFG.token) return textOut("BAD_TOKEN");
 
     const data = {
@@ -247,6 +249,7 @@ function getAction(p) {
   {
     // 선생님 현황 화면은 학생용 token 이 아니라 자기 열쇠(k)로 확인합니다. 그래서 token 검사보다 먼저 봅니다.
     if (p.action === "monitor") out = monitorData(p.cls || "", p.k || "");
+    else if (p.action === "grade") out = gradeData(p.cls || "", p.k || "");       // 채점(선생님 PC의 업무 어시스턴트): 읽기만
     else if (p.action === "takeover") out = takeover(p.sid, p.kp, p.k || "");   // 현황 화면의 "기존 기록 잇기"
     else if (p.action === "ovtick") out = overviewTick(p.k || "");               // 현황 화면이 1분마다 따로 부름
     else if (p.action === "tcmd") out = teacherCommand(p);                         // 현황 화면에서 학생에게 보내는 조작
@@ -1637,6 +1640,12 @@ function newTeacherKey() {
   Logger.log("주소가 새 나갔다고 생각되면 newTeacherKey() 를 다시 실행하면 예전 주소는 막힙니다.");
   return k;
 }
+// 채점 화면도 현황 화면과 같은 교사 열쇠를 씁니다(현황 화면의 '채점' 단추가 그 열쇠로 엶. 열쇠를 따로 두지 않음, 교사 결정 2026-10-27).
+function gradeKeyOk(k) {
+  k = String(k || "");
+  const t = teacherKey();
+  return k.length >= 20 && !!t && k === t;
+}
 function teacherKey() { try { return PropertiesService.getScriptProperties().getProperty("teacherKey") || ""; } catch (e) { return ""; } }
 function ms(d) { return (d instanceof Date && !isNaN(d)) ? d.getTime() : 0; }
 
@@ -1657,6 +1666,147 @@ function monitorData(cls, key) {
     students: cls ? all.students.filter((s) => s.c === cls) : all.students
   };
 }
+
+/* ── 채점용 읽기 (2026-10-27) ──
+   선생님 PC의 채점 화면이 교사 열쇠로 부릅니다. 시트를 읽기만 하고 아무것도 쓰지 않습니다.
+   학생마다 최종 글(Step 4)과 1·2회차 제출 시각, 최종 PDF 주소를 돌려줍니다.
+   "명단" 탭에만 있고 한 번도 안 들어온 학생은 ph 가 빈 줄로 붙습니다(미응시 확인용). */
+function gradeData(cls, key) {
+  if (!gradeKeyOk(key)) return { error: "BAD_KEY" };
+  const out = { ok: true, at: Date.now(), students: [] };
+  try {
+    const sh = draftSheet();
+    const last = sh.getLastRow();
+    const seen = {};
+    if (last >= 2) {
+      const rows = sh.getRange(2, 1, last - 1, COL.finalPdf).getValues();
+      rows.forEach((r) => {
+        const sid = String(r[COL.sid - 1] || "").trim();
+        if (!sid || String(r[COL.dup - 1] || "") === "이어받음") return;
+        const c = classOf(sid);
+        if (cls && c !== cls) return;
+        let st = {};
+        try { st = JSON.parse(String(r[COL.json - 1] || "{}")) || {}; } catch (e) { st = {}; }
+        seen[sid] = true;
+        out.students.push({
+          c: c, sid: sid, nm: String(r[COL.name - 1] || ""), ph: String(r[COL.phase - 1] || "research"),
+          dup: String(r[COL.dup - 1] || "") === "Y",
+          dr: ms(r[COL.draftAt - 1]), fn: ms(r[COL.finalAt - 1]),
+          final: String(st.final || ""), pdf: String(r[COL.finalPdf - 1] || "")
+        });
+      });
+    }
+    const rs = logBook().getSheetByName((CFG.overview || {}).rosterName || "명단");
+    if (rs && rs.getLastRow() >= 2) {
+      rs.getRange(2, 1, rs.getLastRow() - 1, 2).getValues().forEach((r) => {
+        const id = String(r[0] || "").trim();
+        if (!/^\d{3,}$/.test(id) || seen[id]) return;
+        const c = classOf(id);
+        if (cls && c !== cls) return;
+        out.students.push({ c: c, sid: id, nm: String(r[1] || "").trim(), ph: "", dup: false, dr: 0, fn: 0, final: "", pdf: "" });
+      });
+    }
+    const g = gradeRows();
+    out.students.forEach((x) => { x.g = g[x.sid] ? g[x.sid].v : null; });
+    out.students.sort((x, y) => Number(x.sid) - Number(y.sid));
+  } catch (e) {
+    logError("채점용 읽기", e, "");
+    return { error: "READ_FAIL" };
+  }
+  return out;
+}
+
+/* "채점" 탭: 학번 한 줄씩. 채점 페이지(docs/grade.html)가 쓰는 칸과 선생님 PC의 Claude 가 쓰는 칸이 따로입니다.
+   점수 자체는 적지 않습니다(페이지가 규칙으로 계산). 적는 것은 사람이 정한 값과 AI 표시뿐입니다. */
+const GRADE_HEAD = ["학번", "이름", "오류 수", "점수 고침(JSON)", "메모", "AI 표시(JSON)", "AI 표시 시각", "고친 시각", "가감(JSON)"];
+function gradeSheet() {
+  const ss = logBook();
+  let sh = ss.getSheetByName("채점");
+  if (!sh) {
+    sh = ss.insertSheet("채점");
+    sh.getRange(1, 1, 1, GRADE_HEAD.length).setValues([GRADE_HEAD]).setFontWeight("bold");
+    sh.getRange("A:A").setNumberFormat("@");
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+// { 학번: { row, v: { e, ov, memo, marks, mAt, at } } }
+function gradeRows() {
+  const sh = gradeSheet(), out = {};
+  const last = sh.getLastRow();
+  if (last < 2) return out;
+  sh.getRange(2, 1, last - 1, GRADE_HEAD.length).getValues().forEach((r, i) => {
+    const sid = String(r[0] || "").trim();
+    if (!sid) return;
+    const js = (v, d) => { try { return v ? JSON.parse(String(v)) : d; } catch (e) { return d; } };
+    out[sid] = { row: i + 2, v: { e: r[2] === "" ? null : Number(r[2]), ov: js(r[3], {}), memo: String(r[4] || ""), marks: js(r[5], null), mAt: ms(r[6]), at: ms(r[7]), adj: js(r[8], []) } };
+  });
+  return out;
+}
+function gradeRowFor(sh, rows, sid, name) {
+  if (rows[sid]) return rows[sid].row;
+  sh.appendRow([sid, safeCell(name || ""), "", "", "", "", "", "", ""]);
+  return sh.getLastRow();
+}
+function gradeSave(p) {
+  if (!gradeKeyOk(p.k)) return { error: "BAD_KEY" };
+  const sid = String(p.sid || "").trim();
+  if (!/^\d{3,}$/.test(sid)) return { error: "BAD_SID" };
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) return { error: "BUSY" };
+  try {
+    const sh = gradeSheet(), rows = gradeRows();
+    const row = gradeRowFor(sh, rows, sid, p.name);
+    if (p.e !== undefined) {
+      const e = String(p.e).trim();
+      sh.getRange(row, 3).setValue(e === "" ? "" : Math.max(0, Math.min(99, Math.round(Number(e) || 0))));
+    }
+    if (p.ov !== undefined) {
+      let ov = {};
+      try { ov = JSON.parse(String(p.ov || "{}")) || {}; } catch (e) { ov = {}; }
+      const top = { prep: 24, length: 12, grammar: 12, expr: 12 }, clean = {};
+      Object.keys(top).forEach((k) => { if (ov[k] !== undefined && ov[k] !== "" && ov[k] !== null) clean[k] = Math.max(0, Math.min(top[k], Math.round(Number(ov[k]) || 0))); });
+      sh.getRange(row, 4).setValue(Object.keys(clean).length ? JSON.stringify(clean) : "");
+    }
+    if (p.memo !== undefined) sh.getRange(row, 5).setValue(safeCell(String(p.memo || "").slice(0, 500)));
+    if (p.adj !== undefined) {   // 선생님 가감: [{r: 사유, p: 점수}] 사유가 있는 줄만, 10줄까지
+      let adj = [];
+      try { adj = JSON.parse(String(p.adj || "[]")) || []; } catch (e) { adj = []; }
+      const clean = (Array.isArray(adj) ? adj : []).map((a) => ({ r: String((a && a.r) || "").trim().slice(0, 100), p: Math.max(-60, Math.min(60, Math.round(Number(a && a.p) || 0))) }))
+        .filter((a) => a.r && a.p).slice(0, 10);
+      sh.getRange(row, 9).setValue(clean.length ? JSON.stringify(clean) : "");
+    }
+    sh.getRange(row, 8).setValue(new Date());
+    SpreadsheetApp.flush();
+    return { ok: true, g: gradeRows()[sid].v };
+  } finally { lock.releaseLock(); }
+}
+function gradeMarks(p) {
+  const want = teacherKey();
+  if (!want || String(p.k || "") !== want) return { error: "BAD_KEY" };
+  let items;
+  try { items = JSON.parse(String(p.items || "[]")); } catch (e) { return { error: "BAD_ITEMS" }; }
+  if (!Array.isArray(items) || items.length > 80) return { error: "BAD_ITEMS" };
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) return { error: "BUSY" };
+  try {
+    const sh = gradeSheet();
+    let rows = gradeRows(), n = 0;
+    items.forEach((it) => {
+      const sid = String((it && it.sid) || "").trim();
+      if (!/^\d{3,}$/.test(sid) || !Array.isArray(it.marks)) return;
+      const marks = it.marks.slice(0, 60).map((m) => ({ s: Number(m.s) || 0, e: Number(m.e) || 0, k: String(m.k || "").slice(0, 6),
+        q: String(m.q || "").slice(0, 120), f: String(m.f || "").slice(0, 120), w: String(m.w || "").slice(0, 120) }));
+      const row = gradeRowFor(sh, rows, sid, it.name);
+      if (!rows[sid]) rows[sid] = { row: row, v: {} };
+      sh.getRange(row, 6, 1, 2).setValues([[JSON.stringify(marks), new Date(Number(it.at) || Date.now())]]);
+      n++;
+    });
+    SpreadsheetApp.flush();
+    return { ok: true, n: n };
+  } finally { lock.releaseLock(); }
+}
+function jsonText(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
 
 // 현황 화면이 1분마다 따로 부르는 일: 총괄 탭 다시 쓰기 + 빠진 PDF 2개까지 채우기.
 // 예전에는 3초마다 읽는 요청 안에서 했기 때문에, 그 요청이 10~30초 걸려 현황 화면이 1분마다 멈췄습니다(2026-10-21 부하 시험 최대 33초).

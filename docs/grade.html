@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>수행평가 채점 (교사용)</title>
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<!--
+  영어 쓰기 수행평가 채점 화면. 선생님들이 자기 반을 골라 채점합니다.
+
+  여는 법: 현황 화면(teacher.html) 위의 '채점' 단추. 현황 화면과 같은 열쇠로 grade.html#k=열쇠 를 엽니다.
+  이 파일에는 열쇠가 들어 있지 않습니다(저장소가 공개라서). 학생에게 이 주소를 알려 주지 마세요.
+
+  점수 (총 60점) — 규칙은 이 파일의 score() 한 곳:
+    참여·준비도 24  : 1회차(초안)·2회차(최종) 둘 다 제출 24, 하나 16, 접속만 8, 미응시 0
+    완성도·분량 12  : 최종 글 문장 9개 이상 12, 6~8 9, 3~5 6, 1~2 3
+    표현 다양성 12  : 최종 제출했으면 12 (표현 개수는 참고)
+    형식·문법성 12  : 선생님이 오류 수 입력 0~2 12, 3~5 9, 6~8 6, 9개 이상 3
+    가감            : 선생님이 사유와 점수를 적어 더하거나 뺌 (사유 없는 줄은 저장 안 됨). 총점은 0~60 안으로.
+  빨간 칠(AI 표시)은 선생님 PC의 Claude 가 만든 '의심' 표시일 뿐이고, 개수는 선생님이 셉니다.
+  문장 나누기·Word Bank 규칙은 index.html 의 splitSentences·CONFIG.wordBank 와 같게 둡니다.
+
+  보안: 학생 글·AI 표시·메모는 모두 textContent/escape 로만 화면에 넣습니다(innerHTML 에 날것으로 넣지 않음).
+-->
+<style>
+  :root{ --ink:#1B2436; --muted:#5D6675; --line:#DDE3EC; --bg:#F4F6FA; --card:#FFFFFF; --blue:#2C5FD6;
+         --amber:#B26A00; --amber-soft:#FFF2D6; --green:#0E7C66; --red:#B42318; --red-soft:#FDE9E7; }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif; background:var(--bg); color:var(--ink); -webkit-text-size-adjust:100%}
+  header{position:sticky; top:0; z-index:10; background:#1B2436; color:#fff; padding:10px 16px 0}
+  .top{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+  .top h1{font-size:17px; margin:0}
+  .top .sp{margin-left:auto; display:flex; gap:8px; align-items:center; font-size:13px; color:#B9C2D0}
+  .top button{border:1px solid #3B475E; background:#2C3547; color:#fff; border-radius:8px; padding:6px 12px; font:inherit; font-size:14px; cursor:pointer}
+  .tabs{display:flex; gap:6px; overflow-x:auto; padding:10px 0 0}
+  .tabs button{flex:0 0 auto; background:#2C3547; color:#C7CEDA; border:0; border-radius:8px 8px 0 0; padding:9px 16px; font:inherit; font-size:15px; font-weight:600; cursor:pointer}
+  .tabs button.on{background:var(--bg); color:var(--ink)}
+  .tabs button .n{font-size:12px; color:#8A93A2; margin-left:6px; font-weight:500}
+  .bar{display:flex; gap:12px; align-items:center; flex-wrap:wrap; padding:10px 16px; background:#fff; border-bottom:1px solid var(--line); font-size:14px}
+  .bar button{border:1px solid var(--line); background:#fff; border-radius:8px; padding:6px 12px; font:inherit; cursor:pointer}
+  .bar .sp{margin-left:auto; display:flex; gap:8px; align-items:center}
+  main{padding:14px; display:grid; grid-template-columns:230px minmax(0,1fr) 300px; gap:14px; align-items:start}
+  @media (max-width:1100px){ main{grid-template-columns:190px minmax(0,1fr)} #score{grid-column:1 / -1} }
+  .list{background:#fff; border:1px solid var(--line); border-radius:10px; max-height:calc(100vh - 160px); overflow:auto}
+  .list button{display:grid; grid-template-columns:34px 1fr auto; gap:6px; width:100%; text-align:left; padding:8px 10px; border:0; border-bottom:1px solid var(--line); background:#fff; font:inherit; font-size:14px; cursor:pointer}
+  .list button.on{background:#E8EFFC}
+  .list .n{color:var(--muted)} .list .t{font-weight:700} .list .t.need{color:var(--amber); font-weight:600; font-size:12px}
+  .paper{background:#fff; border:1px solid var(--line); border-radius:10px; padding:18px 22px; min-height:200px}
+  .paper h2{margin:0 0 4px; font-size:18px}
+  .meta{color:var(--muted); font-size:13px; margin-bottom:12px}
+  .text{font:17px/1.9 Georgia,"Times New Roman",serif; white-space:pre-wrap}
+  .wb{text-decoration:underline 2px; text-decoration-color:var(--green); text-underline-offset:3px}
+  .mk{background:#ffe0dc; border-radius:3px; cursor:help} .mk.chk{background:#fff1c4}
+  .mk sup{font:700 10px/1 system-ui,sans-serif; color:var(--red); margin-left:1px}
+  .marks{margin:14px 0 0; padding-left:22px; font-size:14px} .marks li{margin-bottom:5px}
+  .marks .k{display:inline-block; font-size:11px; font-weight:700; padding:0 6px; border-radius:999px; background:var(--line); margin-right:4px}
+  .marks del{color:var(--red)} .marks ins{color:var(--green); text-decoration:none; font-weight:600}
+  .hint{color:var(--muted); font-size:13px}
+  #score{background:#fff; border:1px solid var(--line); border-radius:10px; padding:14px 16px; position:sticky; top:120px}
+  #score table{width:100%; border-collapse:collapse; font-size:14px}
+  #score td{padding:6px 4px; border-bottom:1px solid var(--line)} #score td.v{text-align:right; white-space:nowrap}
+  #score input[type=number]{width:62px; text-align:right; font:inherit; padding:3px 6px; border:1px solid var(--line); border-radius:6px}
+  .errbox{background:#E8EFFC; border-radius:10px; padding:10px; margin-bottom:10px}
+  .errbox input{width:80px !important; font-size:20px !important; text-align:center !important}
+  .total{font-size:30px; font-weight:800; text-align:right; margin-top:8px} .total small{font-size:14px; color:var(--muted)}
+  textarea{width:100%; font:inherit; border:1px solid var(--line); border-radius:8px; padding:6px 8px}
+  .empty{padding:40px; text-align:center; color:var(--muted)}
+  .saved{font-size:12px; color:var(--green)}
+  .adj{margin-top:10px; border-top:1px solid var(--line); padding-top:8px}
+  .adj .row{display:grid; grid-template-columns:minmax(0,1fr) 64px 26px; gap:6px; margin-bottom:6px}
+  .adj input{font:inherit; padding:4px 6px; border:1px solid var(--line); border-radius:6px; min-width:0}
+  .adj .del{border:0; background:none; color:var(--muted); cursor:pointer; font-size:16px}
+  .adj .add{border:1px dashed var(--line); background:#fff; border-radius:8px; padding:4px 10px; font:inherit; font-size:13px; cursor:pointer}
+  .err{background:var(--red-soft); color:var(--red); padding:10px 14px; margin:14px; border-radius:8px}
+  #tnote{position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--ink); color:#fff; padding:9px 16px; border-radius:10px; font-size:14px; z-index:20}
+</style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <h1>수행평가 채점</h1>
+    <div class="sp"><span id="fresh">불러오는 중…</span><button id="btnReload">새로 고침</button></div>
+  </div>
+  <div class="tabs" id="tabs"></div>
+</header>
+<div class="bar" id="bar" hidden>
+  <span id="clsInfo"></span>
+  <div class="sp">
+    <label class="hint"><input type="checkbox" id="prMarks" checked> AI 표시 함께</label>
+    <button id="btnPrint">이 반 점수 붙은 제출물 인쇄</button>
+    <button id="btnXlsx">엑셀 (전체·반별)</button>
+  </div>
+</div>
+<div id="msg"></div>
+<main id="main" hidden>
+  <nav class="list" id="list"></nav>
+  <section class="paper" id="paper"><div class="empty">왼쪽에서 학생을 고르세요.</div></section>
+  <aside id="score" hidden></aside>
+</main>
+<div id="tnote" hidden role="status"></div>
+
+<script>
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzq2ub-CXiHUErkWcvN7YgPbNacIoDZZlT6jNsRSKB6G1nWOivxRzfjlAIp83kQdPvl4Q/exec";
+const q = new URLSearchParams(location.search);
+const KEY = q.get("k") || new URLSearchParams(location.hash.slice(1)).get("k") || "";
+if (q.get("k")) { try { history.replaceState(null, "", location.pathname + "#k=" + encodeURIComponent(KEY)); } catch (e) {} }
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const note = (m) => { const n = $("tnote"); n.textContent = m; n.hidden = false; clearTimeout(note.t); note.t = setTimeout(() => (n.hidden = true), 3500); };
+
+/* index.html CONFIG.wordBank 과 같게 */
+const BANK = [
+  ["inclusive", /\binclusive(?:ly|ness)?\b/i],
+  ["accessible (to)", /\baccessib(?:le|ility)\b/i],
+  ["regardless of", /\bregardless\s+of\b/i],
+  ["benefit (from)", /\bbenefit(?:s|ed|ing|ted|ting)?\b/i],
+  ["ensure / make sure that", /\b(?:ensur(?:e|es|ed|ing)|mak(?:e|es|ing)\s+sure|made\s+sure)\b/i],
+  ["rely on", /\brel(?:y|ies|ied|ying)\s+on\b/i],
+  ["make use of", /\b(?:make|makes|made|making)\s+use\s+of\b/i],
+  ["make it easier for A to B", /\b(?:make|makes|made|making)\s+it\s+(?:much\s+|even\s+)?(?:easier|easy|difficult|harder|hard|possible|safer|safe|comfortable)\b/i],
+  ["the reason why / a place where", /\b(?:reasons?\s+why|(?:place|places|room|rooms|space|spaces|area|areas|park|parks|school|library)\s+where)\b/i]
+];
+const PARTS = [["prep", "프로젝트 참여·준비도", 24], ["length", "글의 완성도·분량", 12], ["grammar", "글의 형식·문법성", 12], ["expr", "표현의 다양성", 12]];
+
+/* index.html splitSentences 와 같게 */
+function splitSentences(text) {
+  const t = String(text || "").replace(/\s+/g, " ").trim();
+  if (!t) return [];
+  const out = [], re = /[^.!?]+(?:[.!?]+["')\]]*|$)/g;
+  let m;
+  while ((m = re.exec(t)) !== null) {
+    if (m.index === re.lastIndex) { re.lastIndex++; continue; }
+    const s = m[0].trim();
+    if (/[A-Za-z]{2,}/.test(s)) out.push(s);
+  }
+  return out;
+}
+function bankSpans(text) {
+  const spans = [];
+  BANK.forEach(([, rx]) => { const g = new RegExp(rx.source, "gi"); let m; while ((m = g.exec(text)) !== null) { if (!m[0].length) { g.lastIndex++; continue; } spans.push([m.index, m.index + m[0].length]); } });
+  return spans;
+}
+function score(s) {
+  const g = s.g || {}, text = s.final || "";
+  const submitted = !!s.fn && !!text.trim();
+  const n = submitted ? splitSentences(text).length : 0;
+  const used = submitted ? BANK.filter(([, rx]) => rx.test(text)).map(([l]) => l) : [];
+  const done = (s.dr ? 1 : 0) + (s.fn ? 1 : 0);
+  const errors = g.e === null || g.e === undefined || g.e === "" ? null : Number(g.e);
+  const auto = {
+    prep: !s.ph ? 0 : done === 2 ? 24 : done === 1 ? 16 : 8,
+    length: n >= 9 ? 12 : n >= 6 ? 9 : n >= 3 ? 6 : n >= 1 ? 3 : 0,
+    grammar: !submitted ? 0 : errors === null ? null : errors <= 2 ? 12 : errors <= 5 ? 9 : errors <= 8 ? 6 : 3,
+    expr: submitted ? 12 : 0
+  };
+  const ov = g.ov || {}, parts = {};
+  PARTS.forEach(([k]) => { parts[k] = Number.isInteger(ov[k]) ? ov[k] : auto[k]; });
+  const pending = parts.grammar === null;
+  const adj = (Array.isArray(g.adj) ? g.adj : []).filter((a) => a && a.r && Number(a.p)).map((a) => ({ r: String(a.r), p: Math.round(Number(a.p)) }));
+  const adjSum = adj.reduce((t, a) => t + a.p, 0);
+  const base = pending ? null : parts.prep + parts.length + parts.grammar + parts.expr;
+  return { submitted, n, used, auto, parts, errors, pending, adj, adjSum, base, total: base === null ? null : Math.max(0, Math.min(60, base + adjSum)) };
+}
+/* 서버의 AI 표시 → 글 안 자리 확인 (자리가 글과 안 맞으면 인용으로 다시 찾고, 그래도 없으면 버림) */
+function marksOf(s) {
+  const text = s.final || "", raw = (s.g && Array.isArray(s.g.marks)) ? s.g.marks : [];
+  const out = [];
+  raw.forEach((m) => {
+    let a = Number(m.s), b = Number(m.e);
+    if (!(a >= 0 && b > a && b <= text.length && text.slice(a, b) === m.q)) { a = m.q ? text.indexOf(m.q) : -1; b = a + String(m.q || "").length; }
+    if (a < 0 || out.some((x) => x.s < b && a < x.e)) return;
+    out.push({ s: a, e: b, k: String(m.k || "확인"), q: String(m.q || ""), f: String(m.f || ""), w: String(m.w || "") });
+  });
+  return out.sort((x, y) => x.s - y.s);
+}
+function painted(text, marks) {
+  const kind = new Array(text.length).fill(0);
+  bankSpans(text).forEach(([a, b]) => { for (let i = a; i < b; i++) kind[i] = -1; });
+  marks.forEach((m, n) => { for (let i = m.s; i < m.e; i++) kind[i] = n + 1; });
+  let html = "", i = 0;
+  while (i < text.length) {
+    let j = i; while (j < text.length && kind[j] === kind[i]) j++;
+    const piece = esc(text.slice(i, j)), k = kind[i];
+    if (k > 0) { const m = marks[k - 1]; html += '<span class="mk' + (m.k === "확인" ? " chk" : "") + '" title="' + esc(m.k + ": " + m.f + " — " + m.w) + '">' + piece + "<sup>" + k + "</sup></span>"; }
+    else if (k < 0) html += '<span class="wb">' + piece + "</span>";
+    else html += piece;
+    i = j;
+  }
+  return html;
+}
+function marksList(marks) {
+  return marks.length ? '<ol class="marks">' + marks.map((m) => '<li><span class="k">' + esc(m.k) + "</span><del>" + esc(m.q) + "</del> → <ins>" + esc(m.f) + '</ins> <span class="hint">' + esc(m.w) + "</span></li>").join("") + "</ol>" : "";
+}
+const when = (t) => t ? new Date(t).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "안 냄";
+
+/* 서버: 쿠키를 보내지 않는 fetch (teacher.html 과 같은 이유) */
+async function ask(params) {
+  const r = await fetch(SCRIPT_URL + "?" + new URLSearchParams(params).toString(), { credentials: "omit", cache: "no-store" });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return JSON.parse(await r.text());
+}
+async function send(params) {
+  const r = await fetch(SCRIPT_URL, { method: "POST", credentials: "omit", body: new URLSearchParams(params) });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return JSON.parse(await r.text());
+}
+
+let ALL = [], cls = localStorage.getItem("g_cls") || "", cur = null, saveTimer = null;
+
+async function load() {
+  if (!KEY) { $("msg").innerHTML = '<div class="err">주소 뒤에 #k=열쇠 가 없습니다. 받은 채점 주소 그대로 여세요.</div>'; $("fresh").textContent = ""; return; }
+  $("fresh").textContent = "불러오는 중…";
+  let d;
+  try { d = await ask({ action: "grade", k: KEY }); }
+  catch (e) { $("fresh").textContent = "연결 실패"; $("msg").innerHTML = '<div class="err">서버에 닿지 못했습니다. 잠시 뒤 새로 고침을 누르세요.</div>'; return; }
+  if (d.error) { $("fresh").textContent = ""; $("msg").innerHTML = '<div class="err">' + (d.error === "BAD_KEY" ? "열쇠가 맞지 않습니다." : "서버 오류: " + esc(d.error)) + "</div>"; return; }
+  $("msg").innerHTML = "";
+  ALL = d.students || [];
+  const classes = [...new Set(ALL.map((s) => s.c))].sort();
+  if (!classes.includes(cls)) cls = classes[0] || "";
+  $("tabs").innerHTML = classes.map((c) => '<button data-c="' + esc(c) + '" class="' + (c === cls ? "on" : "") + '">' + esc(c) + (/^\d+$/.test(c) ? "반" : "") + '<span class="n">' + ALL.filter((s) => s.c === c).length + "</span></button>").join("");
+  $("fresh").textContent = "불러온 때 " + new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
+  $("bar").hidden = $("main").hidden = !classes.length;
+  if (cur) cur = ALL.find((s) => s.sid === cur.sid) || null;
+  list(); if (cur) show(false);
+}
+function rows() { return ALL.filter((s) => s.c === cls); }
+function list() {
+  const rs = rows(), sc = rs.map(score);
+  const need = sc.filter((x) => x.pending).length, noMark = rs.filter((s, i) => sc[i].submitted && !(s.g && Array.isArray(s.g.marks))).length;
+  $("clsInfo").textContent = rs.length + "명 · 오류 수 입력 남음 " + need + "명" + (noMark ? " · AI 표시 기다리는 글 " + noMark + "개" : "");
+  $("list").innerHTML = rs.map((s, i) => '<button data-sid="' + esc(s.sid) + '" class="' + (cur && cur.sid === s.sid ? "on" : "") + '"><span class="n">' + esc(String(s.sid).slice(-2)) + "</span><span>" + esc(s.nm) + '</span><span class="t' + (sc[i].pending ? " need" : "") + '">' + (sc[i].pending ? "입력" : sc[i].total) + "</span></button>").join("") || '<div class="empty">학생이 없습니다</div>';
+}
+function show(first) {
+  const s = cur, sc = score(s), g = s.g || {}, marks = marksOf(s);
+  $("paper").innerHTML = "<h2>" + esc(s.sid) + " " + esc(s.nm) + "</h2>" +
+    '<div class="meta">1회차(초안) ' + esc(when(s.dr)) + " · 2회차(최종) " + esc(when(s.fn)) + " · 문장 " + sc.n + "개 · Word Bank " + sc.used.length + "개" + (sc.used.length ? " (" + esc(sc.used.join(", ")) + ")" : "") +
+    (/^https:\/\/(drive|docs)\.google\.com\//.test(s.pdf || "") ? ' · <a href="' + esc(s.pdf) + '" target="_blank" rel="noopener noreferrer">최종 PDF</a>' : "") + "</div>" +
+    (sc.submitted ? '<div class="text">' + painted(s.final, marks) + '</div><p class="hint" style="margin-top:12px">초록 밑줄 = Word Bank 표현 · 빨간 칠 = AI 가 본 오류 의심 · 노란 칠 = 확인 필요' +
+      (Array.isArray(g.marks) ? "" : " · AI 표시를 기다리는 중 (선생님 PC가 만들어 올림)") + "</p>" + marksList(marks)
+      : '<div class="empty">' + (s.ph ? "최종 글을 내지 않았습니다" : "한 번도 들어오지 않았습니다 (미응시)") + "</div>");
+  const ov = g.ov || {};
+  $("score").hidden = false;
+  $("score").innerHTML = '<div class="errbox"><b>오류 수</b> <span class="hint">AI 표시 ' + marks.length + "개 (참고)</span><br>" +
+    '<input type="number" id="errIn" min="0" max="99" value="' + (sc.errors === null ? "" : sc.errors) + '" placeholder="?"' + (sc.submitted ? "" : " disabled") + '> <span class="hint">개 · Enter = 다음 학생</span><br>' +
+    '<span class="hint">0~2 12점 · 3~5 9점 · 6~8 6점 · 9~ 3점</span></div><table>' +
+    PARTS.map(([k, name, top]) => "<tr><td>" + name + '<br><span class="hint">자동 ' + (sc.auto[k] === null ? "—" : sc.auto[k]) + '점</span></td><td class="v"><input type="number" data-ov="' + k + '" min="0" max="' + top + '" value="' + (Number.isInteger(ov[k]) ? ov[k] : "") + '" placeholder="' + (sc.parts[k] === null ? "?" : sc.parts[k]) + '"> / ' + top + "</td></tr>").join("") +
+    '</table><div class="adj"><b>가감</b> <span class="hint">사유와 점수(예: -2, +1)를 적으면 총점에 더해집니다</span><div id="adjRows">' +
+      sc.adj.map(() => adjRow()).join("") + '</div><button class="add" id="adjAdd">+ 가감 줄 더하기</button></div>' +
+    '<div class="total">' + (sc.total === null ? "?" : sc.total) + '<small> / 60' + (sc.adjSum ? " (가감 " + (sc.adjSum > 0 ? "+" : "") + sc.adjSum + ")" : "") + '</small></div>' +
+    '<p class="hint" style="margin:4px 0 8px">자동 점수를 바꾸려면 칸에 숫자를 넣으세요. 비우면 자동 점수입니다. <span class="saved" id="saved"></span></p>' +
+    '<textarea id="memoIn" rows="2" maxlength="500" placeholder="메모 (엑셀에 들어갑니다)"></textarea>';
+  $("memoIn").value = g.memo || "";   // 메모·가감 사유는 값으로만 (HTML 로 넣지 않음)
+  const rowsEl = $("adjRows").children;
+  sc.adj.forEach((a, i) => { rowsEl[i].querySelector(".r").value = a.r; rowsEl[i].querySelector(".p").value = a.p; });
+  const err = $("errIn");
+  if (first && err && !err.disabled) { err.focus(); err.select(); }
+}
+function adjRow() { return '<div class="row"><input class="r" maxlength="100" placeholder="사유"><input class="p" type="number" min="-60" max="60" placeholder="±점"><button class="del" title="이 줄 지우기">×</button></div>'; }
+function adjNow() {
+  return [...document.querySelectorAll("#adjRows .row")].map((r) => ({ r: r.querySelector(".r").value.trim(), p: Number(r.querySelector(".p").value) || 0 })).filter((a) => a.r && a.p);
+}
+document.addEventListener("click", (e) => {
+  if (e.target.id === "adjAdd") { $("adjRows").insertAdjacentHTML("beforeend", adjRow()); const r = $("adjRows").lastElementChild; r.querySelector(".r").focus(); }
+  else if (e.target.classList && e.target.classList.contains("del") && e.target.closest("#adjRows")) { e.target.closest(".row").remove(); save({ adj: adjNow() }); }
+});
+function save(change, then) {
+  const s = cur;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    const params = { action: "gradeSave", k: KEY, sid: s.sid, name: s.nm };
+    if ("e" in change) params.e = change.e === null ? "" : String(change.e);
+    if ("ov" in change) params.ov = JSON.stringify(change.ov);
+    if ("memo" in change) params.memo = change.memo;
+    if ("adj" in change) params.adj = JSON.stringify(change.adj);
+    try {
+      const r = await send(params);
+      if (r.error) throw new Error(r.error === "BAD_KEY" ? "열쇠가 맞지 않습니다" : r.error === "BUSY" ? "서버가 바쁩니다. 다시 입력해 주세요" : r.error);
+      s.g = r.g;
+      if (cur === s && !then) {
+        const a = document.activeElement;
+        if (a && a.closest && a.closest("#adjRows")) {   // 가감 줄을 쓰는 중이면 다시 그리지 않고 총점만
+          const sc = score(s);
+          document.querySelector("#score .total").innerHTML = (sc.total === null ? "?" : sc.total) + "<small> / 60" + (sc.adjSum ? " (가감 " + (sc.adjSum > 0 ? "+" : "") + sc.adjSum + ")" : "") + "</small>";
+        } else {
+          const id = a && (a.id || (a.dataset && a.dataset.ov)); show(false);
+          const back = id && ($(id) || document.querySelector('[data-ov="' + id + '"]')); if (back) back.focus();
+        }
+        $("saved").textContent = "저장됨";
+      }
+      list();
+      if (then) then();
+    } catch (e) { note("저장하지 못했습니다: " + e.message); }
+  }, then ? 0 : 600);
+}
+document.addEventListener("input", (e) => {
+  if (!cur) return;
+  if (e.target.id === "errIn") save({ e: e.target.value === "" ? null : Number(e.target.value) });
+  else if (e.target.dataset && e.target.dataset.ov) {
+    const ov = {}; document.querySelectorAll("[data-ov]").forEach((x) => { if (x.value !== "") ov[x.dataset.ov] = Number(x.value); });
+    save({ ov });
+  } else if (e.target.id === "memoIn") save({ memo: e.target.value });
+  else if (e.target.closest && e.target.closest("#adjRows")) save({ adj: adjNow() });
+});
+document.addEventListener("keydown", (e) => {
+  if (e.target.id === "errIn" && e.key === "Enter") {
+    const rs = rows(), i = rs.findIndex((s) => s.sid === cur.sid);
+    save({ e: e.target.value === "" ? null : Number(e.target.value) }, () => { if (rs[i + 1]) { cur = rs[i + 1]; list(); show(true); } });
+  }
+});
+$("tabs").onclick = (e) => { const b = e.target.closest("button[data-c]"); if (!b) return; cls = b.dataset.c; try { localStorage.setItem("g_cls", cls); } catch (x) {} cur = null; $("score").hidden = true; $("paper").innerHTML = '<div class="empty">왼쪽에서 학생을 고르세요.</div>'; document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("on", x === b)); list(); };
+$("list").onclick = (e) => { const b = e.target.closest("button[data-sid]"); if (!b) return; cur = ALL.find((s) => s.sid === b.dataset.sid); list(); show(true); };
+$("btnReload").onclick = load;
+
+/* ── 점수 붙은 제출물 (인쇄 → PDF 로 저장) ── */
+$("btnPrint").onclick = () => {
+  const withMarks = $("prMarks").checked;
+  const pages = rows().map((s) => {
+    const sc = score(s), marks = withMarks ? marksOf(s) : [], g = s.g || {};
+    return "<section><h2>" + esc(s.sid) + " " + esc(s.nm) + '</h2><p class="m">1회차 ' + esc(when(s.dr)) + " · 2회차 " + esc(when(s.fn)) + " · 문장 " + sc.n + "개 · Word Bank " + sc.used.length + "개 · 오류 " + (sc.errors === null ? "?" : sc.errors) + "개</p>" +
+      '<div class="two"><div class="text">' + (sc.submitted ? painted(s.final, marks) : (s.ph ? "(최종 글 없음)" : "(미응시)")) + "</div><table>" +
+      PARTS.map(([k, name, top]) => "<tr><td>" + name + '</td><td class="v">' + (sc.parts[k] === null ? "?" : sc.parts[k]) + " / " + top + "</td></tr>").join("") +
+      sc.adj.map((a) => "<tr><td>가감: " + esc(a.r) + '</td><td class="v">' + (a.p > 0 ? "+" : "") + a.p + "</td></tr>").join("") +
+      '<tr class="t"><td>총점</td><td class="v">' + (sc.total === null ? "?" : sc.total) + " / 60</td></tr></table></div>" + marksList(marks) + (g.memo ? '<p class="m">메모: ' + esc(g.memo) + "</p>" : "") + "</section>";
+  }).join("");
+  const w = window.open("", "_blank");
+  if (!w) { note("팝업이 막혔습니다. 이 사이트의 팝업을 허용해 주세요"); return; }
+  w.opener = null;
+  w.document.write('<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>' + esc(cls) + ' 수행평가 점수</title><style>' +
+    'body{font:13px/1.6 "Malgun Gothic",sans-serif;margin:18mm 14mm;color:#111}section{page-break-after:always}section:last-child{page-break-after:auto}' +
+    'h2{margin:0;font-size:17px}.m{color:#555;margin:2px 0 10px}.two{display:grid;grid-template-columns:1fr 62mm;gap:8mm;align-items:start}' +
+    '.text{font:15px/1.9 Georgia,serif;white-space:pre-wrap;border:1px solid #ccc;padding:4mm 5mm;border-radius:2mm}.wb{text-decoration:underline}.mk{background:#ffe0dc}.mk.chk{background:#fff1c4}.mk sup{font-size:9px;color:#b3261e}' +
+    'table{border-collapse:collapse;width:100%}td{border:1px solid #999;padding:2mm}td.v{text-align:right;white-space:nowrap;font-weight:700}tr.t td{font-size:15px;background:#f2f2f2}' +
+    '.marks{font-size:12px;padding-left:18px}.marks .k{font-weight:700;margin-right:4px}.marks del{color:#b3261e}.marks ins{color:#1d6b3a;text-decoration:none}.hint{color:#666}' +
+    "</style></head><body>" + (pages || "학생이 없습니다") + "</body></html>");
+  w.document.close();
+  setTimeout(() => { try { w.print(); } catch (e) {} }, 400);
+};
+
+/* ── 엑셀 (.xlsx, 라이브러리 없이) ── */
+const HEAD = ["반", "학번", "이름", "1회차(초안) 제출", "2회차(최종) 제출", "참여·준비도(24)", "문장 수", "완성도·분량(12)", "오류 수", "형식·문법성(12)", "표현 수", "표현 다양성(12)", "가감", "가감 사유", "총점(60)", "메모"];
+const WIDTH = [8, 9, 10, 15, 15, 14, 8, 14, 8, 14, 8, 14, 7, 28, 9, 30];
+function tableOf(list) {
+  return [HEAD].concat(list.map((s) => {
+    const sc = score(s), memo = ((sc.pending ? "오류 수 입력 필요. " : "") + ((s.g && s.g.memo) || "")).trim();
+    return [s.c, /^\d+$/.test(s.sid) ? Number(s.sid) : s.sid, s.nm, s.dr ? when(s.dr) : "", s.fn ? when(s.fn) : "", sc.parts.prep, sc.n, sc.parts.length,
+            sc.errors === null ? "" : sc.errors, sc.parts.grammar === null ? "" : sc.parts.grammar, sc.used.length, sc.parts.expr,
+            sc.adjSum || "", sc.adj.map((a) => a.r + " " + (a.p > 0 ? "+" : "") + a.p).join(", "), sc.total === null ? "" : sc.total, memo];
+  }));
+}
+const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(b) { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function zip(files) {   // 압축 없이 담기 (store)
+  const enc = new TextEncoder(), parts = [], central = [];
+  let off = 0;
+  files.forEach(([name, text]) => {
+    const n = enc.encode(name), d = enc.encode(text), c = crc32(d);
+    const h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint32(14, c, true); h.setUint32(18, d.length, true); h.setUint32(22, d.length, true); h.setUint16(26, n.length, true);
+    parts.push(new Uint8Array(h.buffer), n, d);
+    const ce = new DataView(new ArrayBuffer(46));
+    ce.setUint32(0, 0x02014b50, true); ce.setUint16(4, 20, true); ce.setUint16(6, 20, true); ce.setUint16(8, 0x0800, true); ce.setUint32(16, c, true); ce.setUint32(20, d.length, true); ce.setUint32(24, d.length, true); ce.setUint16(28, n.length, true); ce.setUint32(42, off, true);
+    central.push(new Uint8Array(ce.buffer), n);
+    off += 30 + n.length + d.length;
+  });
+  const size = central.reduce((a, b) => a + b.length, 0), end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true); end.setUint32(12, size, true); end.setUint32(16, off, true);
+  return new Blob(parts.concat(central, [new Uint8Array(end.buffer)]), { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+}
+const xe = (s) => String(s).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+function col(i) { let s = ""; i++; while (i) { const r = (i - 1) % 26; s = String.fromCharCode(65 + r) + s; i = Math.floor((i - 1) / 26); } return s; }
+function sheetXml(t) {
+  const body = t.map((row, r) => '<row r="' + (r + 1) + '">' + row.map((v, c) => {
+    const ref = col(c) + (r + 1), st = r === 0 ? ' s="1"' : "";
+    if (v === "" || v === null || v === undefined) return '<c r="' + ref + '"' + st + "/>";
+    if (typeof v === "number") return '<c r="' + ref + '"' + st + "><v>" + v + "</v></c>";
+    return '<c r="' + ref + '" t="inlineStr"' + st + '><is><t xml:space="preserve">' + xe(v) + "</t></is></c>";
+  }).join("") + "</row>").join("");
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>' +
+    WIDTH.map((w, i) => '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + w + '" customWidth="1"/>').join("") + "</cols><sheetData>" + body + "</sheetData></worksheet>";
+}
+$("btnXlsx").onclick = () => {
+  const classes = [...new Set(ALL.map((s) => s.c))].sort();
+  const sheets = [["총괄", tableOf(ALL)]].concat(classes.map((c) => [(/^\d+$/.test(c) ? c + "반" : c).replace(/[\[\]:*?\/\\]/g, " ").slice(0, 31), tableOf(ALL.filter((s) => s.c === c))]));
+  const NS = "http://schemas.openxmlformats.org/";
+  const files = [
+    ["[Content_Types].xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="' + NS + 'package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+      sheets.map((_, i) => '<Override PartName="/xl/worksheets/sheet' + (i + 1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join("") + "</Types>"],
+    ["_rels/.rels", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="' + NS + 'package/2006/relationships"><Relationship Id="rId1" Type="' + NS + 'officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+    ["xl/workbook.xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="' + NS + 'spreadsheetml/2006/main" xmlns:r="' + NS + 'officeDocument/2006/relationships"><sheets>' + sheets.map(([n], i) => '<sheet name="' + xe(n) + '" sheetId="' + (i + 1) + '" r:id="rId' + (i + 1) + '"/>').join("") + "</sheets></workbook>"],
+    ["xl/_rels/workbook.xml.rels", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="' + NS + 'package/2006/relationships">' + sheets.map((_, i) => '<Relationship Id="rId' + (i + 1) + '" Type="' + NS + 'officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (i + 1) + '.xml"/>').join("") +
+      '<Relationship Id="rId' + (sheets.length + 1) + '" Type="' + NS + 'officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'],
+    ["xl/styles.xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="' + NS + 'spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="맑은 고딕"/></font><font><b/><sz val="11"/><name val="맑은 고딕"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFEFEF"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="2"><xf/><xf fontId="1" fillId="2" applyFont="1" applyFill="1"/></cellXfs></styleSheet>']
+  ].concat(sheets.map(([, t], i) => ["xl/worksheets/sheet" + (i + 1) + ".xml", sheetXml(t)]));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(zip(files));
+  a.download = "수행평가_채점_" + new Date().toISOString().slice(0, 10) + ".xlsx";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+};
+
+load();
+</script>
+</body>
+</html>
