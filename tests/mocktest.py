@@ -325,6 +325,13 @@ def check(label, cond, detail=''):
 # ── T0. 서버 파일 검사 ────────────────────────────────────────────
 # 브라우저 테스트는 가짜 서버를 쓰므로 gas/Code.gs 자체를 검사할 수 없다.
 # 예전에 실제로 사고가 났던 부분만 직접 확인한다.
+def until(pg, js, ms=15000):
+    """js 가 참이 될 때까지 기다림 (시간이 지나도 실패로 끝내지 않고 바로 다음 check 가 판단)"""
+    try:
+        pg.wait_for_function('() => { try { return !!(' + js + '); } catch (e) { return false; } }', timeout=ms)
+    except Exception:
+        pass
+
 def check_stale_rule():
     """gas/Code.gs 의 staleRows 를 node 로 직접 돌려 본다 (2026-10-28 실제로 있었던 모양들)."""
     import subprocess
@@ -990,29 +997,29 @@ with sync_playwright() as p:
         T2.click('#cmenu button:has-text("%s")' % label); T2.wait_for_timeout(1200)
     menu('10207', '5분 더 주기')
     check('현황판: 보냈다는 안내', '보냈습니다' in T2.inner_text('#tnote'), T2.inner_text('#tnote')[:50])
-    Sx.wait_for_timeout(2500)
+    until(Sx, 'state.extraSec === 300')
     check('학생 화면: 5분이 늘어남', Sx.evaluate('state.extraSec') == 300, Sx.evaluate('state.extraSec'))
     check('다른 학생에게는 안 감', S2.evaluate('state.extraSec || 0') == 0)
     menu('10207', '초안 쓰기 단계로', right=False)
-    Sx.wait_for_timeout(2500)
+    until(Sx, "document.getElementById('phaseLabel').innerText === '초안 쓰기'")
     check('학생 화면: 초안 단계로 넘어감 (⋯ 단추)', Sx.inner_text('#phaseLabel') == '초안 쓰기', Sx.inner_text('#phaseLabel'))
     T2.wait_for_timeout(3500)    # 현황 화면이 새 단계를 읽어 오게
     menu('10207', '메시지 보내기')
-    Sx.wait_for_timeout(2500)
+    until(Sx, "document.getElementById('dlgTitle').innerText.includes('선생님 메시지')")
     check('학생 화면: 선생님 메시지 창', '선생님 메시지' in Sx.inner_text('#dlgTitle') and '책상 위를 정리하세요' in Sx.inner_text('#dlgText'), Sx.inner_text('#dlgText')[:30])
     Sx.click('#dlgActions button:has-text("확인")'); Sx.wait_for_timeout(300)
     type_line(Sx, 0, 0, 'Teacher made me submit.'); Sx.wait_for_timeout(500)
     menu('10207', '지금 제출시키기')
-    Sx.wait_for_timeout(3500)
+    until(Sx, "state.phase === 'draftDone' && !document.getElementById('done').hidden")
     check('학생 화면: 지금 제출됨', not Sx.eval_on_selector('#done', 'e=>e.hidden') and Sx.evaluate('state.phase') == 'draftDone', Sx.evaluate('state.phase'))
     T2.wait_for_timeout(3500)
     menu('10207', '제출 취소')
-    Sx.wait_for_timeout(3500)
+    until(Sx, "state.phase === 'draft' && !document.getElementById('app').hidden")
     check('학생 화면: 제출 취소로 다시 열림', Sx.evaluate('state.phase') == 'draft' and not Sx.eval_on_selector('#app', 'e=>e.hidden'), Sx.evaluate('state.phase'))
     T2.click('#classMenu'); T2.wait_for_selector('#cmenu:not([hidden])')
     T2.click('#cmenu button:has-text("5분 더 주기")'); T2.wait_for_timeout(1500)
     check('반 전체: 보낸 학생 수 안내', '명에게' in T2.inner_text('#tnote'), T2.inner_text('#tnote')[:40])
-    Sx.wait_for_timeout(2500)
+    until(S2, 'state.extraSec === 300'); until(Sx, 'state.extraSec >= 300')
     check('반 전체: 두 학생 모두 반영', S2.evaluate('state.extraSec') == 300 and Sx.evaluate('state.extraSec') >= 300, [S2.evaluate('state.extraSec'), Sx.evaluate('state.extraSec')])
     Sx.wait_for_timeout(1500)
     lastS = [x for x in posts if x['sid'] == '10207' and x['phase'] == 'save']
