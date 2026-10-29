@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # 커밋 → GitHub 푸시(Pages) → Apps Script 푸시 → 기존 웹 앱 배포 갱신. 사용: bash scripts/deploy.sh "바꾼 내용"
 set -e
+# 학교망 보안 장비(SOOSAN ePrism)가 구글 연결에 자기 인증서를 끼움 → Node 도 Windows 인증서 저장소를 쓰게 (2026-10-29)
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--use-system-ca"
 cd "$(dirname "$0")/.."
 MSG="${1:-update $(date +%Y-%m-%d_%H:%M)}"
 
