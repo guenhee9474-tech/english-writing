@@ -110,7 +110,7 @@ with sync_playwright() as p:
     check('선생님 표시가 저장되고 (원래 글 위치), 오류 수 +1, 보라색으로', DB['10101']['g']['ok'] == [f'{i0}-{i0 + 11}'] and pg.input_value('#errIn') == '1' and pg.locator('.text .mk.tch').count() == 1)
     pg.click('.marks li.tch .tg'); pg.wait_for_timeout(1200)
     check("선생님 표시 '빼기' → 0", DB['10101']['g']['ok'] == [] and pg.input_value('#errIn') == '0')
-    pg.fill('#errIn', '4'); pg.wait_for_timeout(1200)
+    pg.fill('#errIn', '4'); pg.wait_for_timeout(2500)
     check('오류 4개 → 57점, 서버에 저장', pg.inner_text('#score .total').startswith('57') and any(s.get('e') == '4' and s.get('sid') == '10101' for s in saves), pg.inner_text('#score .total'))
 
     pg.click('#adjAdd'); pg.fill('#adjRows .row:last-child .r', '발표 우수')

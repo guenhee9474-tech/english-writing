@@ -67,7 +67,7 @@ def find(sid, key):
     return next((r for r in rows if r['sid'] == sid and r['key'] == key and key), None)
 
 def add_row(sid, name, key, dup):
-    r = {'sid': sid, 'name': name, 'key': key, 'data': None, 'phase': 'research',
+    r = {'sid': sid, 'name': name, 'key': key, 'data': None, 'phase': 'research', 'reg': now_iso(),
          'at': None, 'draftAt': None, 'finalAt': None, 'dup': dup, 'brain': '', 'draft': ''}
     rows.append(r)
     return r
@@ -82,6 +82,18 @@ def ahead_of(r):
     c = [x for x in rows[rows.index(r) + 1:] if x['sid'] == r['sid'] and x['dup'] != '이어받음' and norm(x['name']) == norm(r['name'])]
     best = max(c, key=lambda x: ORDER.get(x['phase'], 0), default=None)
     return best if best and ORDER.get(best['phase'], 0) >= ORDER['draftDone'] else None
+
+def hide_of(r):
+    """gas/Code.gs 의 staleRows 숨김 규칙: 같은 학번·이름에서 가장 앞선 줄 b 가 초안 이상이고 r 이 뒤처졌으며,
+    b 가 나중에 생겼거나, 최종 제출이거나, r 보다 나중에 저장됐으면 r 을 숨긴다."""
+    if r['dup'] == '이어받음':
+        return None
+    when = lambda x: x['at'] or x['reg']
+    grp = [x for x in rows if x['sid'] == r['sid'] and x['dup'] != '이어받음' and norm(x['name']) == norm(r['name'])]
+    b = max(grp, key=lambda x: ORDER.get(x['phase'], 0))   # 같은 단계면 먼저 생긴 줄
+    if b is r or ORDER.get(r['phase'], 0) >= ORDER.get(b['phase'], 0) or ORDER.get(b['phase'], 0) < ORDER['draftDone']:
+        return None
+    return b if (rows.index(b) > rows.index(r) or b['phase'] == 'done' or when(b) >= when(r)) else None
 
 def write_row(r, b, g, phase, allow_regress):
     """gas/Code.gs 의 saveDraft 와 같은 규칙."""
@@ -264,9 +276,9 @@ def monitor(k):
         return {'error': 'BAD_KEY'}
     st = []
     for i, r in enumerate(rows):
-        if r['dup'] == '이어받음' or ahead_of(r):
+        if r['dup'] == '이어받음' or hide_of(r):
             continue
-        od = sum(1 for y in rows if ahead_of(y) is r)
+        od = sum(1 for y in rows if hide_of(y) is r)
         x = {'c': r['sid'][0] + '학년 ' + str(int(r['sid'][1:3])) + '반', 'sid': r['sid'], 'nm': r['name'], 'ph': r['phase'],
              'lv': 0, 'hg': 0, 'bs': 0, 'dc': 0, 'sn': 0, 'at': 0, 'dr': 0, 'fn': 0, 'dup': r['dup'] is True and not od, 'od': od, 'rm': r.get('rm', '')}
         if r['dup'] is True and not od:
@@ -310,6 +322,35 @@ def check(label, cond, detail=''):
 # ── T0. 서버 파일 검사 ────────────────────────────────────────────
 # 브라우저 테스트는 가짜 서버를 쓰므로 gas/Code.gs 자체를 검사할 수 없다.
 # 예전에 실제로 사고가 났던 부분만 직접 확인한다.
+def check_stale_rule():
+    """gas/Code.gs 의 staleRows 를 node 로 직접 돌려 본다 (2026-10-28 실제로 있었던 모양들)."""
+    import subprocess
+    gs = open(os.path.join(BASE, '..', 'gas', 'Code.gs'), encoding='utf-8').read()
+    fn = gs[gs.index('function staleRows('):]
+    fn = fn[:fn.index('\nfunction ', 1)]
+    cases = [
+        [["1", "가", "research", "", 100], ["1", "가", "draftDone", "Y", 200]],
+        [["1", "가", "draftDone", "", 100], ["1", "가", "research", "Y", 200]],
+        [["1", "가", "done", "", 300], ["1", "가", "research", "Y", 200]],
+        [["1", "가", "draftDone", "", 100], ["1", "가", "done", "Y", 300]],
+        [["1", "가", "final", "", 300], ["1", "가", "research", "Y", 200]],
+        [["1", "가", "research", "", 100], ["1", "나", "draftDone", "Y", 200]],
+        [["1", "가", "research", "", 100], ["1", "가", "draftDone", "이어받음", 200]],
+    ]
+    js = ('function nameKey(s) { return String(s || "").replace(/\\s+/g, "").toLowerCase(); }\n'
+          'const PHASE_ORDER = { research: 0, draft: 1, draftDone: 2, final: 3, done: 4 };\n' + fn + '\n'
+          'const run = (rs) => { const o = staleRows(rs.length, (i) => rs[i]);'
+          ' return { hide: Object.keys(o).filter((k) => /^\\d+$/.test(k)).map(Number), mv: Object.keys(o.mv).map(Number) }; };\n'
+          'console.log(JSON.stringify(' + json.dumps(cases, ensure_ascii=False) + '.map(run)));')
+    out = json.loads(subprocess.run(['node', '-e', js], capture_output=True, text=True, encoding='utf-8').stdout)
+    check('남은 줄: 1회차 로그인만 한 옛 기기 줄은 숨기고 저절로 잇기', out[0] == {'hide': [0], 'mv': [0]}, out[0])
+    check('남은 줄: 새 기기에서 막혀 기다리는 줄은 보임 (선생님 잇기)', out[1] == {'hide': [], 'mv': []}, out[1])
+    check('남은 줄: 최종 제출한 학생의 새 기기 빈 줄은 숨김, 저절로 잇지 않음', out[2] == {'hide': [1], 'mv': []}, out[2])
+    check('남은 줄: 새 줄에서 최종 제출하면 옛 초안 줄은 숨김', out[3] == {'hide': [0], 'mv': []}, out[3])
+    check('남은 줄: 원래 기기로 돌아가 이어 쓰면 새 기기 줄은 숨김', out[4] == {'hide': [1], 'mv': []}, out[4])
+    check('남은 줄: 이름이 다르면 숨기지 않음', out[5] == {'hide': [], 'mv': []}, out[5])
+    check('남은 줄: 이어받음 줄은 따지지 않음', out[6] == {'hide': [], 'mv': []}, out[6])
+
 def check_server_file():
     print('T0 서버 파일(gas/Code.gs) 검사')
     gs = open(os.path.join(BASE, '..', 'gas', 'Code.gs'), encoding='utf-8').read()
@@ -481,6 +522,7 @@ def check_server_file():
     check('배포 ID 가 페이지 주소에 든 것과 같다', dep in SCRIPT, dep)
 
 check_server_file()
+check_stale_rule()
 
 # ── T0b. 선생님 현황 화면 검사 ─────────────────────────────────
 # 색을 칠하는 열 위치가 한 칸 어긋나면 총괄에 엉뚱한 색이 찍힌다. 위치를 직접 맞춰 본다.

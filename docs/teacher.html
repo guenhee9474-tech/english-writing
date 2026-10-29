@@ -229,6 +229,7 @@ function render(d) {
   const doneN = list.filter((s) => s.ph === "done").length;
   const quietN = list.filter((s) => quiet(s)).length;
   const rosterN = list.filter((s) => s.rm).length;
+  const waitN = new Set(list.filter((s) => s.kp).map((s) => s.sid)).size;   // 한 학생이 여러 번 막혀도 한 명
 
   const bar = $("bar");
   bar.hidden = false;
@@ -239,6 +240,7 @@ function render(d) {
     '<div class="' + (leaved.length ? "warnbox" : "") + '">이탈<b>' + leaved.length + "명</b></div>" +
     (quietN ? '<div class="warnbox">조용함<b>' + quietN + "명</b></div>" : "") +
     (rosterN ? '<div class="warnbox">명단 확인<b>' + rosterN + "명</b></div>" : "") +
+    (waitN ? '<div class="warnbox" title="새 기기에서 막혀 있어요. 카드의 \'기존 기록 잇기\'를 눌러 주세요">기록 잇기 기다림<b>' + waitN + "명</b></div>" : "") +
     finalBadge(d) +
     '<div class="sp">' +
       '<button id="classMenu" title="이 반 학생 모두에게 (2회차 열기·닫기 포함)">반 전체 ▾</button>' +
