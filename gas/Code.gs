@@ -142,6 +142,7 @@ function handlePost(e) {
     if (p.action === "roster") return textOut(putRoster(p.k || "", p.rows || ""));   // 교사 열쇠로 확인 (학생 token 아님)
     if (p.action === "gradeSave") return jsonText(gradeSave(p));                      // 채점 페이지: 오류 수·고친 점수·메모
     if (p.action === "gradeMarks") return jsonText(gradeMarks(p));                    // 선생님 PC(업무 어시스턴트)의 Claude 표시
+    if (p.action === "fix") return jsonText(adminFix(p));                              // 선생님 정리 (Admin.gs, 교사 열쇠)
     if (CFG.token && p.token !== CFG.token) return textOut("BAD_TOKEN");
 
     const data = {
