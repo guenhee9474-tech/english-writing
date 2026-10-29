@@ -759,7 +759,16 @@ function loadOrRegister(sid, name, key, nameOk, rid, rosterOk) {
       }
       const taken = wasTaken(key);
       if (taken) clearTaken(key);                // 다시 로그인했으니 이제부터 저장을 받습니다
-      return { found: !!v[COL.json - 1], data: v[COL.json - 1] || null, at: v[COL.at - 1], phase: v[COL.phase - 1] || "", key: key,
+      // 막힌 새 기기가 '시작'을 한 번 더 누른 경우: 처음 막힐 때 받은 열쇠가 방금 만든 빈 줄과 맞아 그냥 지나갔습니다
+      // (2026-10-28 10208: 두 기기에서 두 번째 누름에 조사부터 새로 시작). 아직 아무것도 저장하지 않은 중복 줄이면 다시 막습니다.
+      let prior2 = false;
+      if (!v[COL.json - 1] && String(v[COL.dup - 1] || "") === "Y") {
+        const ids = idRows(sh), n = Math.max(1, sh.getLastRow() - 1);
+        const ph = sh.getRange(2, COL.phase, n, 1).getValues(), dc = sh.getRange(2, COL.dup, n, 1).getValues();
+        prior2 = ids.some((row, i) => i !== r - 2 && String(row[COL.sid - 1]) === String(sid) && nameKey(row[COL.name - 1]) === nameKey(stored || name)
+          && String((dc[i] || [""])[0]) !== "이어받음" && (PHASE_ORDER[String((ph[i] || [""])[0])] || 0) >= PHASE_ORDER.draftDone);
+      }
+      return { found: !!v[COL.json - 1], data: v[COL.json - 1] || null, at: v[COL.at - 1], phase: v[COL.phase - 1] || "", key: key, priorSubmitted: prior2,
                name: String(v[COL.name - 1] || name), dup: String(v[COL.dup - 1] || "") === "Y", taken: taken,
                finalAt: String(v[COL.phase - 1]) === "done" ? (v[COL.finalAt - 1] || null) : null };
     }

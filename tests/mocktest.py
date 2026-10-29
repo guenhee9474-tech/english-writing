@@ -203,7 +203,10 @@ def mock(route):
             out = {'found': bool(a['data']), 'data': a['data'], 'key': a['key'], 'name': a['name'],
                    'dup': False, 'phase': a['phase'], 'at': a['at'], 'transferred': True}
         elif r:
-            out = {'found': bool(r['data']), 'data': r['data'], 'key': key, 'name': r['name'],
+            # 막힌 새 기기가 시작을 다시 누름: 아직 빈 중복 줄이면 다시 막는다 (gas/Code.gs prior2)
+            prior2 = not r['data'] and r['dup'] is True and any(x is not r and x['sid'] == sid and norm(x['name']) == norm(r['name'])
+                                                               and x['dup'] != '이어받음' and ORDER.get(x['phase'], 0) >= ORDER['draftDone'] for x in rows)
+            out = {'found': bool(r['data']), 'data': r['data'], 'key': key, 'name': r['name'], 'priorSubmitted': prior2,
                    'dup': r['dup'], 'phase': r['phase'], 'at': r['at'], 'taken': key in TAKEN}
             TAKEN.discard(key)
         elif ROSTER and g('rosterOk') != '1' and (sid not in ROSTER or norm(ROSTER[sid]) != norm(name)):
@@ -824,6 +827,10 @@ with sync_playwright() as p:
     check('새 기기는 중복 줄이 생긴다', sum(1 for r in rows if r['sid'] == '10202') == 2)
     check('이미 초안을 낸 학생은 새 기기에서 처음부터 시작하지 못함', '이미 제출한 기록' in I.inner_text('#dlgTitle') and I.eval_on_selector('#app', 'e=>e.hidden'),
           I.inner_text('#dlgTitle'))
+    I.click('#dlgActions button:has-text("확인")'); I.wait_for_timeout(300)
+    I.click('#startBtn'); I.wait_for_timeout(1500)       # 2026-10-28 10208: 막힌 뒤 시작을 다시 누르면 지나가던 구멍
+    check('막힌 새 기기에서 시작을 다시 눌러도 다시 막힘', '이미 제출한 기록' in I.inner_text('#dlgTitle') and I.eval_on_selector('#app', 'e=>e.hidden')
+          and sum(1 for r in rows if r['sid'] == '10202') == 2, I.inner_text('#dlgTitle'))
     I.click('#dlgActions button:has-text("확인")'); I.wait_for_timeout(300)
     ctxT = b.new_context(viewport={'width': 1280, 'height': 900}); T = ctxT.new_page()
     T.route(SCRIPT + '*', mock)
