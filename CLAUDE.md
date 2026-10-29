@@ -219,3 +219,9 @@ GitHub Pages 반영은 최대 10분, Safari 캐시는 주소 뒤 `?v=숫자`로 
 - 문장 나누기·Word Bank 는 `index.html`의 `splitSentences`·`CONFIG.wordBank`와 같게 두고, 바꾸면 `grade.html`과 coolwatch 쪽을 함께 바꾼다.
 - AI 표시 중 선생님이 **'오류로 셈'**으로 고른 것은 `gradeSave`의 `ok`(=["시작-끝", …])로 '채점' 탭 10번째 칸에 저장한다. 누를 때마다 오류 수가 ±1 바뀐다. 'AI 표시 모두 오류로'/'모두 빼기'로 한꺼번에 바꿀 수 있다(아닌 것만 눌러 빼는 방식). AI가 놓친 곳은 선생님이 글에서 끌어 골라 '오류로 표시'하면 AI 표시와 겹치지 않는 '시작-끝'이 같은 `ok`에 들어가 보라색 선생님 표시가 된다(글자 위치는 sup 번호를 빼고 셈). 인쇄는 센 표시만 넣는다.
 - 테스트: `python tests/gradetest.py`(가짜 서버, XSS·열쇠·점수·가감·엑셀·인쇄), `python tests/ai_marks_test.py`(가리기·표시 올리기).
+
+## 선생님 정리 기능 (`gas/Admin.gs`, 2026-10-29)
+
+- POST `action=fix`, 교사 열쇠(`k`). `op=inspect`(학번들의 줄 상태·단계 기록·교사 조작·오류 탭 줄, 글 내용 없이) / `op=backup`(제출명단 파일을 같은 폴더에 통째로 복사) / `op=rename`(이름 고치고 PDF 다시) / `op=hide`(남은 줄 숨김, 지우지 않음) / `op=mergeFinal`(같은 이름 다른 줄의 최종 글을 원래 줄로 옮기고 최종 PDF 다시, 옮긴 줄은 숨김).
+- 바꾸는 op 는 **그날 백업(op=backup)을 먼저 해야** 돈다. 한 일은 오류 탭에 "선생님 정리(정상 처리)"로 남는다.
+- `.claspignore`에 `!Admin.gs`가 있어야 서버로 올라간다.
