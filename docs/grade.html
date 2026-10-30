@@ -486,21 +486,50 @@ document.addEventListener("click", (e) => {
   if (e.target.id === "adjAdd") { $("adjRows").insertAdjacentHTML("beforeend", adjRow()); const r = $("adjRows").lastElementChild; r.querySelector(".r").focus(); }
   else if (e.target.classList && e.target.classList.contains("del") && e.target.closest("#adjRows")) { e.target.closest(".row").remove(); save({ adj: adjNow() }); }
 });
+/* 저장: 학생마다 바뀐 칸을 모아 두었다가 한 줄로 차례차례 보낸다.
+   예전에는 타이머 하나를 같이 써서, 표시를 누르고 0.6초 안에 다른 학생으로 가거나 다른 칸을 고치면 앞의 저장이 사라졌고,
+   먼저 보낸 저장의 답이 늦게 와서 그 사이 누른 표시를 화면에서 지우기도 했다(2026-10-30 선생님 제보). */
+const pend = new Map(), edits = {};
+let chain = Promise.resolve();
 function save(change, then) {
-  const s = cur;
+  const s = cur, p = pend.get(s.sid) || { s, change: {} };
+  s.g = Object.assign({}, s.g || {}, change);   // 화면이 늘 마지막으로 고친 값을 보이게
+  Object.assign(p.change, change); p.s = s; if (then) p.then = then;
+  pend.set(s.sid, p);
+  edits[s.sid] = (edits[s.sid] || 0) + 1;
+  $("saved").textContent = "저장 중…";
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
-    const params = { action: "gradeSave", k: KEY, sid: s.sid, name: s.nm };
-    if ("e" in change) params.e = change.e === null ? "" : String(change.e);
-    if ("ov" in change) params.ov = JSON.stringify(change.ov);
-    if ("memo" in change) params.memo = change.memo;
-    if ("adj" in change) params.adj = JSON.stringify(change.adj);
-    if ("ok" in change) params.ok = JSON.stringify(change.ok);
+  saveTimer = setTimeout(flush, then ? 0 : 600);
+}
+function flush() {
+  const jobs = [...pend.values()]; pend.clear();
+  jobs.forEach((j) => { chain = chain.then(() => sendOne(j)).catch(() => {}); });
+}
+addEventListener("beforeunload", (e) => { if (pend.size) { clearTimeout(saveTimer); flush(); e.preventDefault(); e.returnValue = ""; } });
+async function sendOne({ s, change, then }) {
+  const at = edits[s.sid];
+  const params = { action: "gradeSave", k: KEY, sid: s.sid, name: s.nm };
+  if ("e" in change) params.e = change.e === null ? "" : String(change.e);
+  if ("ov" in change) params.ov = JSON.stringify(change.ov);
+  if ("memo" in change) params.memo = change.memo;
+  if ("adj" in change) params.adj = JSON.stringify(change.adj);
+  if ("ok" in change) params.ok = JSON.stringify(change.ok);
+  {
+    let r;
     try {
-      const r = await send(params);
+      for (let n = 0; ; n++) {   // 값을 통째로 보내므로 다시 보내도 안전하다
+        try { r = await send(params); } catch (x) { if (n < 2) { await new Promise((ok) => setTimeout(ok, 1500)); continue; } throw x; }
+        if (r.error === "BUSY" && n < 2) { await new Promise((ok) => setTimeout(ok, 1500)); continue; }
+        break;
+      }
       if (r.error) throw new Error(r.error === "BAD_KEY" ? "열쇠가 맞지 않습니다" : r.error === "BUSY" ? "서버가 바쁩니다. 다시 입력해 주세요" : r.error);
-      s.g = r.g;
-      if (cur === s && !then) {
+    } catch (e) { note("저장하지 못했습니다: " + e.message); $("saved").textContent = "저장 안 됨"; return; }
+    if (edits[s.sid] !== at) { if (then) then(); return; }   // 그 사이 더 고쳤으면 이 답으로 덮지 않는다(다음 저장이 맞춘다)
+    const live = ALL.find((x) => x.sid === s.sid);
+    s.g = r.g; if (live) live.g = r.g;
+    {
+      if (cur && cur.sid === s.sid && !then) {
+        const s = cur;
         const a = document.activeElement;
         if (a && a.closest && a.closest("#adjRows")) {   // 가감 줄을 쓰는 중이면 다시 그리지 않고 총점만
           const sc = score(s);
@@ -509,12 +538,12 @@ function save(change, then) {
           const id = a && (a.id || (a.dataset && a.dataset.ov)); show(false);
           const back = id && ($(id) || document.querySelector('[data-ov="' + id + '"]')); if (back) back.focus();
         }
-        $("saved").textContent = "저장됨";
+        if (!pend.size) $("saved").textContent = "저장됨";
       }
       list();
       if (then) then();
-    } catch (e) { note("저장하지 못했습니다: " + e.message); }
-  }, then ? 0 : 600);
+    }
+  }
 }
 document.addEventListener("input", (e) => {
   if (!cur) return;

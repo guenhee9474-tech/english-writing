@@ -99,6 +99,20 @@ with sync_playwright() as p:
     check("'AI 표시 모두 오류로' → 다 세고 오류 수도 그만큼", pg.input_value('#errIn') == '1' and len(DB['10101']['g']['ok']) == 1)
     pg.click('[data-bulk="none"]'); pg.wait_for_timeout(1200)
     check("'모두 빼기' → 0", pg.input_value('#errIn') == '0' and DB['10101']['g']['ok'] == [])
+    # 표시를 누르고 곧바로 다른 칸을 고쳐도 표시 저장이 사라지지 않음 (2026-10-30 제보)
+    pg.click('.marks li[data-mid] .tg'); pg.wait_for_timeout(100); pg.fill('#memoIn', '확인'); pg.wait_for_timeout(1500)
+    check('누르고 바로 메모를 써도 표시가 저장됨', DB['10101']['g'].get('ok') == [mid] and DB['10101']['g']['e'] == 1 and DB['10101']['g']['memo'] == '확인', DB['10101']['g'])
+    pg.fill('#memoIn', ''); pg.wait_for_timeout(1500)
+    # 서버가 느릴 때: 앞 저장의 답이 늦게 와도 그 사이 누른 것이 화면에서 되돌아가지 않음
+    pg.evaluate("""() => { const f = window.fetch; window.fetch = async (u, o) => { if (o && o.method === 'POST') await new Promise(r => setTimeout(r, 1500)); return f(u, o); }; }""")
+    pg.click('.text .mk[data-mid]'); pg.wait_for_timeout(900)   # 빼기 → 저장이 서버로 가는 중
+    pg.click('.text .mk[data-mid]'); pg.wait_for_timeout(1400)  # 다시 세기 → 그 사이 앞 답(뺀 상태)이 도착
+    check('느린 서버: 앞 저장의 답이 와도 방금 누른 표시가 유지', pg.locator('.text .mk.yes').count() == 1 and pg.input_value('#errIn') == '1')
+    pg.wait_for_timeout(3000)
+    check('느린 서버: 마지막 상태가 서버에 저장', DB['10101']['g'].get('ok') == [mid] and DB['10101']['g']['e'] == 1, DB['10101']['g'])
+    pg.click('[data-bulk="none"]'); pg.wait_for_timeout(3500)
+    pg.reload(); pg.wait_for_timeout(1000); pg.click('button[data-sid="10101"]'); pg.wait_for_timeout(300)
+    check('되돌린 뒤 0', DB['10101']['g']['ok'] == [] and pg.input_value('#errIn') == '0')
     # AI 가 놓친 곳을 선생님이 글에서 끌어 골라 표시
     pg.evaluate("""() => { const box = document.querySelector('#paper .text'); const w = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
       let t; while ((t = w.nextNode())) { const i = t.nodeValue.indexOf('wheelchairs'); if (i >= 0) { const r = document.createRange(); r.setStart(t, i); r.setEnd(t, i + 11);
